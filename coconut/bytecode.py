@@ -22,6 +22,13 @@ from pprint import pprint
 
 from coconut.cfg import CFG, Block, Edge, Op
 from coconut.dot import to_html, _dot_column
+from coconut.ir import \
+    NULL, Expression, ConstInt, ConstString, Global, \
+    Call, FieldDereference, UnaryExpr, EnumValue
+
+# Globals
+Py_None = Global('PyObject *', 'Py_None')
+PyExc_ValueError = Global('PyObject *', 'PyExc_ValueError')
 
 # Constants
 # From object.h: Rich comparison opcodes:
@@ -39,8 +46,9 @@ PyCmp_EQ=Py_EQ
 PyCmp_NE=Py_NE
 PyCmp_GT=Py_GT
 PyCmp_GE=Py_GE
-PyCmp_IN, PyCmp_NOT_IN, PyCmp_IS, PyCmp_IS_NOT, PyCmp_EXC_MATCH, PyCmp_BAD = range(PyCmp_GE + 1,
-                                                                                   PyCmp_GE + 6 + 1)
+PyCmp_IN, PyCmp_NOT_IN, PyCmp_IS, PyCmp_IS_NOT, \
+    PyCmp_EXC_MATCH, PyCmp_BAD = range(PyCmp_GE + 1,
+                                       PyCmp_GE + 6 + 1)
 
 enum_cmp_op = {
     PyCmp_LT : "PyCmp_LT",
@@ -56,6 +64,12 @@ enum_cmp_op = {
     PyCmp_EXC_MATCH : "PyCmp_EXC_MATCH",
     PyCmp_BAD : "PyCmp_BAD",
 }
+
+NAME_ERROR_MSG = "name '%.200s' is not defined"
+GLOBAL_NAME_ERROR_MSG = "global name '%.200s' is not defined"
+UNBOUNDLOCAL_ERROR_MSG = "local variable '%.200s' referenced before assignment"
+UNBOUNDFREE_ERROR_MSG = ("free variable '%.200s' referenced before assignment"
+                         " in enclosing scope")
 
 class NotEvaluatable(Exception):
     pass
@@ -151,17 +165,6 @@ class BytecodeCFG(CFG):
             # their bytecode carved out into separate blocks:
             if op.is_jump():
                 self._ensure_starts_basic_block(op.get_next_addr())
-
-            # actually, these should be optimized away by peephole.c: seems like an RFE
-            # where do these come from?
-            # nested conditionals?
-            # why is (POP_JUMP_IF_FALSE -> JUMP_ABSOLUTE -> A) not becoming (POP_JUMP_IF_FALSE -> A) ?
-
-
-            # aha:
-            # Optimizing jump: (58 -> 74 -> 77) to (58 -> 77)
-            # and this "uses" up the redirection for addr 58, even though 77 is _also_ an unconditional jump
-            # so we should probably follow these; must not get into following loops though
 
         # Associate operations and basic blocks:
         curblock = None
@@ -861,6 +864,7 @@ class NOP(BytecodeOp):
 class LOAD_FAST(BytecodeOp):
     def ceval(self, ctxt):
         x = ctxt.compiler.x
+        co = ctxt.compiler.co
         # Based on:
         #    x = GETLOCAL(oparg);
         #    if (x != NULL) {
@@ -879,9 +883,11 @@ class LOAD_FAST(BytecodeOp):
         true_ctxt.FAST_DISPATCH()
         false_ctxt.add_call(None,
                             'format_exc_check_arg',
-                            (Expression('PyExc_UnboundLocalError'),
-                             Expression('UNBOUNDLOCAL_ERROR_MSG'),
-                             Expression('PyTuple_GetItem(co->co_varnames, %i)' % self.arg)))
+                            (Global('PyObject *', 'PyExc_UnboundLocalError'),
+                             ConstString(UNBOUNDLOCAL_ERROR_MSG),
+                             Call('PyTuple_GetItem',
+                                  (FieldDereference(co, 'co_varnames'),
+                                   ConstInt(self.arg)))))
         false_ctxt.break_to_on_error()
 
 class LOAD_CONST(BytecodeOp):
@@ -892,7 +898,7 @@ class LOAD_CONST(BytecodeOp):
         #    Py_INCREF(x);
         #    PUSH(x);
         #    FAST_DISPATCH();
-        ctxt.assign(x, Expression('GETITEM(consts, %i)' % self.arg))
+        ctxt.add_GETITEM(x, 'consts', self.arg)
         ctxt.Py_INCREF(x)
         ctxt.PUSH(x)
         ctxt.FAST_DISPATCH()
@@ -993,7 +999,8 @@ class UNARY_INVERT(BytecodeOp):
 
 class BINARY_POWER(BytecodeOp):
     def ceval(self, ctxt):
-        impl_simple_binary_op(ctxt, 'PyNumber_Power', Expression('Py_None'))
+        impl_simple_binary_op(ctxt, 'PyNumber_Power',
+                              Py_None)
 
 class BINARY_MULTIPLY(BytecodeOp):
     def ceval(self, ctxt):
@@ -1048,7 +1055,7 @@ class SET_ADD(BytecodeOp):
 
 class INPLACE_POWER(BytecodeOp):
     def ceval(self, ctxt):
-        impl_simple_INPLACE_op(ctxt, 'PyNumber_InPlacePower', Expression('Py_None'))
+        impl_simple_INPLACE_op(ctxt, 'PyNumber_InPlacePower', Py_None)
 class INPLACE_MULTIPLY(BytecodeOp):
     def ceval(self, ctxt):
         impl_simple_INPLACE_op(ctxt, 'PyNumber_InPlaceMultiply')
@@ -1273,14 +1280,16 @@ def unpack_iterable(ctxt, v, argcnt, argcntafter, offset):
         # is_null_ctxt:
         is_null_ctxt.add_comment('Iterator done, via error or exhaustion.')
         no_err_occurred, err_occurred = \
-            is_null_ctxt.add_conditional(Expression('!PyErr_Occurred()'), '!=', ConstInt(0),
+            is_null_ctxt.add_conditional(UnaryExpr('!', Call('PyErr_Occurred', ())),
+                                         '!=',
+                                         ConstInt(0),
                                          true_label='PyErr_Occurred_is_false',
                                          false_label='PyErr_Occurred_is_true')
 
         # no_err_occurred:
         #   We can precompute the formatted error:
         no_err_occurred.add_call(None, 'PyErr_SetString',  # rather than PyErr_Format
-                                 (Expression('PyExc_ValueError'),
+                                 (PyExc_ValueError,
                                   ConstString("need more than %d value%s to unpack"
                                               % (i, "" if i == 1 else "s"))))
         impl_goto_error(no_err_occurred, i)
@@ -1301,7 +1310,8 @@ def unpack_iterable(ctxt, v, argcnt, argcntafter, offset):
 
     # is_null_ctxt2:
     err_occurred2, no_err_occurred2 = \
-        is_null_ctxt2.add_conditional(Expression('PyErr_Occurred()'), '!=', ConstInt(0))
+        is_null_ctxt2.add_conditional(Call('PyErr_Occurred', ()),
+                                      '!=', ConstInt(0))
 
     impl_goto_error(err_occurred2, i)
 
@@ -1311,7 +1321,7 @@ def unpack_iterable(ctxt, v, argcnt, argcntafter, offset):
     # non_null_ctxt2:
     non_null_ctxt2.Py_DECREF(w)
     non_null_ctxt2.add_call(None, 'PyErr_SetString',  # rather than PyErr_Format
-                              (Expression('PyExc_ValueError'),
+                              (PyExc_ValueError,
                                # precomputed format error:
                                ConstString("too many values to unpack "
                                            "(expected %d)" % argcnt)))
@@ -1415,15 +1425,6 @@ class UNPACK_SEQUENCE(BytecodeOp):
         ctxt = incorrect_list_size
         ctxt.add_jump(not_list_ctxt)
 
-        # For non-list/non-tuple or incorrect sizes in the fast path,
-        # bail to the slow path, rather than unrolling all of the handling
-        # logic in the fast path:
-        if ctxt.compiler.use_profile and ctxt.is_fast:
-            # we have to push v back:
-            not_list_ctxt.PUSH(v)
-            not_list_ctxt.bail_to_slow_path()
-            return
-
         # not_list_ctxt:
         true_ctxt, false_ctxt = \
             unpack_iterable(not_list_ctxt, v, self.arg, -1, self.arg)
@@ -1512,7 +1513,7 @@ class LOAD_GLOBAL(BytecodeOp):
         #    }
         #    PUSH(x);
         #    DISPATCH();
-        ctxt.assign(w, Expression('GETITEM(names, %i)' % self.arg))
+        ctxt.add_GETITEM(w, 'names', self.arg)
         if 1:
             # Simplify optimization by deferring inlining the impl until
             # later:
@@ -1770,7 +1771,7 @@ class COMPARE_OP(BytecodeOp):
             ctxt.writeln('break;')
         else:
             # use enum cmp_op when writing out the C, for clarity:
-            ctxt.add_call(x, 'PyObject_RichCompare', (v, w, Expression(enum_cmp_op[arg])))
+            ctxt.add_call(x, 'PyObject_RichCompare', (v, w, EnumValue(arg, enum_cmp_op[arg])))
             return ctxt
         next_ctxt.assign(x, Expression('%s ? Py_True : Py_False' % res.name)) # FIXME
         next_ctxt.add_call(None, 'Py_INCREF', (x,))
@@ -1910,13 +1911,14 @@ class FOR_ITER(BytecodeOp):
         true_ctxt.DISPATCH()
 
         true_ctxt2, false_ctxt2 = \
-            false_ctxt.add_conditional(Expression('PyErr_Occurred()'),
+            false_ctxt.add_conditional(Call('PyErr_Occurred', ()),
                                        '!=', ConstInt(0),
                                        true_label='PyErr_Occurred',
                                        false_label='not_PyErr_Occurred')
 
         true_ctxt3, false_ctxt3 = \
-            true_ctxt2.add_conditional(Expression('PyErr_ExceptionMatches(PyExc_StopIteration)'),
+            true_ctxt2.add_conditional(Call('PyErr_ExceptionMatches',
+                                            (Global('PyObject *', 'PyExc_StopIteration'), )),
                                        '==', ConstInt(0),
                                        true_label='is_StopIteration',
                                        false_label='is_not_StopIteration')

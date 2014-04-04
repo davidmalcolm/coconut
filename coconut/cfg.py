@@ -68,6 +68,16 @@ class CFG:
             f.write(bytes(dot, 'utf-8'))
             os.system('xdot %s' % f.name)
 
+    def verify(self):
+        for block in self.blocks:
+            assert self.addr_to_block[block.addr] == block
+
+        for edge in self.edges:
+            assert edge.src in self.blocks
+            assert edge.dst in self.blocks
+            assert edge in edge.src.succ_edges
+            assert edge in edge.dst.pred_edges
+
     def calc_dominance(self):
         # Calculate the dominators for the blocks,
         # returning a dict, mapping from Block keys to set(block) values
