@@ -141,13 +141,12 @@ class Compiler:
         self.bcfg = BytecodeCFG(co)
         bcfg = self.bcfg
 
+        self.curcblock = self.ircfg.add_block('entry')
+
         # Now construct a IrCFG, initially with at least one basic-block
         # per bytecode operation, and probably many more.
         for addr in sorted(bcfg.addr_to_op):
             self.ircfg.add_block_at(self.get_bytecode_label(addr))
-
-
-        self.curcblock = self.ircfg.add_block('entry')
 
         # fastlocals:
         for i in range(len(co.co_varnames)):
