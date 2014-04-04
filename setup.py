@@ -16,7 +16,7 @@
 #   along with this program.  If not, see
 #   <http://www.gnu.org/licenses/>.
 
-from distutils.core import setup
+from setuptools import setup
 
 setup(name='coconut',
     version='0.1',
@@ -30,5 +30,7 @@ setup(name='coconut',
         'Programming Language :: Python',
         'Programming Language :: Python :: 3',
         'Topic :: Software Development :: Libraries',
-    )
+    ),
+    test_suite='tests',
+    test_loader='tests:TestLoader',
 )
