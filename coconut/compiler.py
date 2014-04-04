@@ -133,7 +133,7 @@ class Compiler:
             dis.dis(co)
 
         # generators don't work yet
-        if co.co_flags & 0x20:
+        if co.co_flags & CO_GENERATOR:
             raise NotImplementedError("Generators aren't yet supported")
 
         # We have an underlying BytecodeCFG, where the operations are bytecode
