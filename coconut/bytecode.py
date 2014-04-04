@@ -15,6 +15,7 @@
 #   along with this program.  If not, see
 #   <http://www.gnu.org/licenses/>.
 
+from collections import namedtuple
 import dis
 import opcode
 from pprint import pprint
@@ -335,7 +336,6 @@ class BytecodeBlock(Block):
         return result
 
 
-from collections import namedtuple
 class BytecodeEffect(namedtuple('BytecodeEffect',
                                 ('bstackdelta', 'vstackdelta', 'nextaddr', 'label'))):
     '''
