@@ -17,8 +17,9 @@
 
 import unittest
 
-from coconut.bytecode import BytecodeCFG, \
-    LOAD_CONST, RETURN_VALUE, BINARY_MULTIPLY, LOAD_FAST, POP_JUMP_IF_FALSE
+from coconut.bytecode import BytecodeCFG, BStackEntry, \
+    LOAD_CONST, RETURN_VALUE, BINARY_MULTIPLY, LOAD_FAST, POP_JUMP_IF_FALSE, \
+    SETUP_EXCEPT, SETUP_FINALLY
 
 class BytecodeTests(unittest.TestCase):
     # tests of bytecode extraction
@@ -147,6 +148,142 @@ class BytecodeTests(unittest.TestCase):
         e1 = cfg.edges[1]
         self.assertEqual(e1.src.addr, 0)
         self.assertEqual(e1.dst.addr, 6)
+
+    def test_block_stack(self):
+        def fn(x):
+            try:
+                try:
+                    return x
+                finally:
+                    x += [1]
+            finally:
+                x += [2]
+
+        self.assertEqual(fn([]), [1, 2])
+
+        # We expect this bytecode:
+        # 154           0 SETUP_FINALLY           29 (to 32)
+        # 155           3 SETUP_FINALLY            8 (to 14)
+        # 156           6 LOAD_FAST                0 (x)
+        #               9 RETURN_VALUE
+        #              10 POP_BLOCK
+        #              11 LOAD_CONST               0 (None)
+        # 158     >>   14 LOAD_FAST                0 (x)
+        #              17 LOAD_CONST               1 (1)
+        #              20 BUILD_LIST               1
+        #              23 INPLACE_ADD
+        #              24 STORE_FAST               0 (x)
+        #              27 END_FINALLY
+        #              28 POP_BLOCK
+        #              29 LOAD_CONST               0 (None)
+        # 160     >>   32 LOAD_FAST                0 (x)
+        #              35 LOAD_CONST               2 (2)
+        #              38 BUILD_LIST               1
+        #              41 INPLACE_ADD
+        #              42 STORE_FAST               0 (x)
+        #              45 END_FINALLY
+        # These last ops are unreachable:
+        #              46 LOAD_CONST               0 (None)
+        #              49 RETURN_VALUE
+
+        co = fn.__code__
+        cfg = BytecodeCFG(co)
+
+        self.assertEqual(len(cfg.blocks), 5)
+        self.assertEqual(len(cfg.edges), 4)
+        self.assertEqual(len(cfg.bytecode), 50)
+
+        op0 = cfg.addr_to_op[0]
+        self.assertIsInstance(op0, SETUP_FINALLY)
+        self.assertEqual(op0.vheight, 0)
+        self.assertEqual(op0.bstack, [])
+
+        op3 = cfg.addr_to_op[3]
+        self.assertIsInstance(op3, SETUP_FINALLY)
+        self.assertEqual(op3.vheight, 0)
+        self.assertEqual(len(op3.bstack), 1)
+
+        # Verify that the SETUP_EXCEPT at 0 has set up a block stack entry
+        # at 3 (for handling a "PyFrame_Block*"):
+        self.assertEqual(len(op3.bstack), 1)
+        bse_at_3 = op3.bstack[0]
+        self.assertIsInstance(bse_at_3, BStackEntry)
+        self.assertEqual(str(bse_at_3), 'SETUP_FINALLY at 0 (to 32)')
+        self.assertEqual(repr(bse_at_3), 'BStackEntry(op=0)')
+        self.assertEqual(bse_at_3.op, op0)
+        self.assertEqual(bse_at_3.get_vstack_height(), 0)
+        self.assertEqual(bse_at_3.get_b_handler(), 32)
+
+        # Likewise, check that the SETUP_EXCEPT at 3 has pushed another block
+        # stack entry at 6:
+        op6 = cfg.addr_to_op[6]
+        self.assertIsInstance(op6, LOAD_FAST)
+        self.assertEqual(len(op6.bstack), 2)
+        self.assertEqual(op6.bstack[0], op3.bstack[0])
+        bse_at_6 = op6.bstack[1]
+        self.assertIsInstance(bse_at_6, BStackEntry)
+        self.assertEqual(str(bse_at_6), 'SETUP_FINALLY at 3 (to 14)')
+        self.assertEqual(repr(bse_at_6), 'BStackEntry(op=3)')
+        self.assertEqual(bse_at_6.op, op3)
+        self.assertEqual(bse_at_6.get_vstack_height(), 0)
+        self.assertEqual(bse_at_6.get_b_handler(), 14)
+
+    def test_exceptions(self):
+        def fn(e):
+            try:
+                2 / 0
+            except ZeroDivisionError(exc):
+                print(exc)
+        # We expect this bytecode:
+        # 153           0 SETUP_EXCEPT            12 (to 15)
+        # 154           3 LOAD_CONST               1 (2)
+        #               6 LOAD_CONST               2 (0)
+        #               9 BINARY_TRUE_DIVIDE
+        #              10 POP_TOP
+        #              11 POP_BLOCK
+        #              12 JUMP_FORWARD            34 (to 49)
+        # 155     >>   15 DUP_TOP
+        #              16 LOAD_GLOBAL              0 (ZeroDivisionError)
+        #              19 LOAD_GLOBAL              1 (exc)
+        #              22 CALL_FUNCTION            1 (1 positional, 0 keyword pair)
+        #              25 COMPARE_OP              10 (exception match)
+        #              28 POP_JUMP_IF_FALSE       48
+        #              31 POP_TOP
+        #              32 POP_TOP
+        #              33 POP_TOP
+        # 156          34 LOAD_GLOBAL              2 (print)
+        #              37 LOAD_GLOBAL              1 (exc)
+        #              40 CALL_FUNCTION            1 (1 positional, 0 keyword pair)
+        #              43 POP_TOP
+        #              44 POP_EXCEPT
+        #              45 JUMP_FORWARD             1 (to 49)
+        #         >>   48 END_FINALLY
+        #         >>   49 LOAD_CONST               0 (None)
+        #              52 RETURN_VALUE
+        co = fn.__code__
+        cfg = BytecodeCFG(co)
+        self.assertEqual(len(cfg.blocks), 6)
+        self.assertEqual(len(cfg.edges), 6)
+        self.assertEqual(len(cfg.bytecode), 53)
+
+        op0 = cfg.addr_to_op[0]
+        self.assertIsInstance(op0, SETUP_EXCEPT)
+        self.assertEqual(op0.vheight, 0)
+        self.assertEqual(op0.bstack, [])
+
+        op3 = cfg.addr_to_op[3]
+        self.assertIsInstance(op3, LOAD_CONST)
+        self.assertEqual(op3.vheight, 0)
+        self.assertEqual(len(op3.bstack), 1)
+        # Verify that the SETUP_EXCEPT has set up a block stack entry
+        # (for handling a "PyFrame_Block*"):
+        bse = op3.bstack[0]
+        self.assertIsInstance(bse, BStackEntry)
+        self.assertEqual(str(bse), 'SETUP_EXCEPT at 0 (to 15)')
+        self.assertEqual(repr(bse), 'BStackEntry(op=0)')
+        self.assertEqual(bse.op, op0)
+        self.assertEqual(bse.get_vstack_height(), 0)
+        self.assertEqual(bse.get_b_handler(), 15)
 
 if __name__ == '__main__':
     unittest.main()
