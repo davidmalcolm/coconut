@@ -114,14 +114,21 @@ class BytecodeTests(unittest.TestCase):
         op0 = cfg.addr_to_op[0]
         self.assertIsInstance(op0, LOAD_FAST)
         self.assertEqual(op0.vheight, 0)
+        self.assertIn(op0.addr, cfg.linestarts)
+        self.assertEqual(op0.get_source_line(),
+                         "            if a:\n")
 
         op3 = cfg.addr_to_op[3]
         self.assertIsInstance(op3, POP_JUMP_IF_FALSE)
         self.assertEqual(op3.vheight, 1)
+        self.assertNotIn(op3.addr, cfg.linestarts)
 
         op6 = cfg.addr_to_op[6]
         self.assertIsInstance(op6, LOAD_FAST)
         self.assertEqual(op6.vheight, 0)
+        self.assertIn(op6.addr, cfg.linestarts)
+        self.assertEqual(op6.get_source_line(),
+                         "                return b\n")
 
         op9 = cfg.addr_to_op[9]
         self.assertIsInstance(op9, RETURN_VALUE)

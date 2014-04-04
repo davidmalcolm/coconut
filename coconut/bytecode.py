@@ -762,6 +762,14 @@ class BytecodeOp(Op):
             return '(' + free[self.arg] + ') '
         return ''
 
+    def get_source_line(self):
+        """
+        Get the source code line for this op (with the trailing newline)
+        Can only be called on ops that start a line.
+        """
+        linenum = self.cfg.linestarts[self.addr]
+        return self.cfg.sourcelines[linenum - 1]
+
 ############################################################################
 # Helper functions for implementing opcodes
 ############################################################################
