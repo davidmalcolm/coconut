@@ -131,6 +131,11 @@ class Compiler:
     def compile(self, co):
         if 0:
             dis.dis(co)
+
+        # generators don't work yet
+        if co.co_flags & 0x20:
+            raise NotImplementedError("Generators aren't yet supported")
+
         # We have an underlying BytecodeCFG, where the operations are bytecode
         # operations, formed into basic blocks:
         self.bcfg = BytecodeCFG(co)
@@ -644,7 +649,9 @@ class OpcodeContext:
 
     def store_stack(self):
         # for use by YIELD_FROM and YIELD_VALUE
-        self.assign(LValue('f->f_stack_top' % i), Expression('f->f_valuestack + %i' % self.vheight))
+        self.assign(FieldDereference(self.compiler.f, 'f_stack_top'),
+                    ArrayLookup(FieldDereference(self.compiler.f, 'f_valuestack'),
+                                ConstInt(self.vheight)))
         for i in range(self.vheight):
             self.assign(LValue('f->f_valuestack[%i]' % i),
                         self.compiler.stack_at_depth(i))

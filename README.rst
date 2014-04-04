@@ -21,3 +21,7 @@ specialization, etc).
 
 This low-level representation can be turned into C, or, I hope,
 injected into a JIT library.
+
+Caveats:
+  * under development: lots of FIXMEs in the code
+  * generators aren't yet supported

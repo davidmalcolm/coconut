@@ -307,6 +307,13 @@ class CompilationTests(unittest.TestCase):
         csrc = ircfg.to_c()
         self.assertIn('BREAK_LOOP', csrc)
 
+    def test_yield(self):
+        def f():
+            yield 42
+        with self.assertRaises(NotImplementedError,
+                               msg="Generators aren't yet supported"):
+            ircfg = compile_(f)
+
 def sample_bytecode_func(a, b, c):
     return 'a: %r, b: %r, c: %r' % (a, b, c)
 
