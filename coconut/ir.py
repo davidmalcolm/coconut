@@ -279,6 +279,18 @@ class Expression:
     def to_c(self):
         raise NotImplementedError
 
+class Cast(Expression):
+    # Generic LValue, containing no references needed by the optimizer
+    def __init__(self, expr, newtype):
+        self.expr = expr
+        self.newtype = newtype
+
+    def __repr__(self):
+        return 'Cast(expr=%r, newtype=%r)' % (self.code, self.newtype)
+
+    def to_c(self):
+        return '(%s)%s' % (self.newtype, self.expr.to_c())
+
 class LValue(Expression):
     # Generic LValue, containing no references needed by the optimizer
     def __init__(self, code):

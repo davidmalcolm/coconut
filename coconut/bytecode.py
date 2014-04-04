@@ -24,9 +24,11 @@ from coconut.cfg import CFG, Block, Edge, Op
 from coconut.dot import to_html, _dot_column
 from coconut.ir import \
     NULL, Expression, ConstInt, ConstString, Global, \
-    Call, FieldDereference, UnaryExpr, EnumValue
+    Call, FieldDereference, UnaryExpr, EnumValue, Cast
 
 # Globals
+Py_False = Cast(Global('struct _longobject', '_Py_FalseStruct'), 'PyObject *')
+Py_True = Cast(Global('struct _longobject', '_Py_TrueStruct'), 'PyObject *')
 Py_None = Global('PyObject *', 'Py_None')
 PyExc_ValueError = Global('PyObject *', 'PyExc_ValueError')
 

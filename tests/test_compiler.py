@@ -88,7 +88,7 @@ class CompilationTests(unittest.TestCase):
         self.assert_is_c(ops[6], 'err = 0;\n')
         self.assert_is_c(ops[7], 'x = Py_None;\n')
         self.assert_is_c(ops[8], 'w = NULL;\n')
-        self.assert_is_c(ops[9], 'const0_None = PyTuple_GET_ITEM(consts, 0);\n')
+        self.assert_is_c(ops[9], 'const0_None = Py_None;\n')
         self.assert_is_jump(ops[10], b_LOAD_CONST)
         self.assert_is_c(ops[10], 'goto bytecode_offset_0_LOAD_CONST;\n')
 
@@ -141,6 +141,20 @@ class CompilationTests(unittest.TestCase):
         csrc = ircfg.to_c()
         # Ensure that constants get readable names:
         self.assertIn('const1_hello_world', csrc)
+
+    def test_false(self):
+        def f():
+            return False
+        ircfg = compile_(f)
+        csrc = ircfg.to_c()
+        self.assertIn('const1_False = (PyObject *)_Py_FalseStruct;', csrc)
+
+    def test_true(self):
+        def f():
+            return True
+        ircfg = compile_(f)
+        csrc = ircfg.to_c()
+        self.assertIn('const1_True = (PyObject *)_Py_TrueStruct;', csrc)
 
     def test_ROT_TWO(self):
         def f(a, b):

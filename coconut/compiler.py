@@ -43,6 +43,7 @@ from coconut.ir import IrCFG, IrBlock, Expression, Local, Const, ConstInt, \
     ConstString,  NULL, Call, Local, Global, Assignment, LValue, \
     FieldDereference, ArrayLookup
 from coconut.dot import dot_to_png, dot_to_svg
+from coconut.optimize import expr_for_python_obj
 
 class UnimplementedBytecode(Exception):
     def __init__(self, op):
@@ -266,9 +267,17 @@ class Compiler:
                 fast = cls(co_var, i)
                 arr.append(fast)
                 self.ircfg.locals.append(fast)
-                self.curcblock.add_call(arr[i],
-                                        'PyTuple_GET_ITEM',
-                                        (tuplevar, ConstInt(i)))
+
+                expr = expr_for_python_obj(co_var[i])
+                if expr:
+                    # Avoid looking up the const if it's a singleton,
+                    # potentially exposing type-information to later
+                    # optimizations:
+                    self.curcblock.add_assignment(arr[i], expr)
+                else:
+                    self.curcblock.add_call(arr[i],
+                                            'PyTuple_GET_ITEM',
+                                            (tuplevar, ConstInt(i)))
                 # FIXME: INCREF/DECREF pairs
         setup_fast_refs(self.fast_names, CoName,
                         self.names, co.co_names)
