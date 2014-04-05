@@ -799,7 +799,7 @@ def impl_simple_unary_op(ctxt, fnname):
     ctxt.add_call(x, fnname, (v,))
     ctxt.Py_DECREF(v)
     ctxt.SET_TOP(x)
-    true_ctxt, false_ctxt = ctxt.add_conditional(x, '!=', NULL(), likely=True)
+    true_ctxt, false_ctxt = ctxt.add_conditional(x, '!=', ctxt.NULL(), likely=True)
     true_ctxt.DISPATCH()
     false_ctxt.break_to_on_error()
 
@@ -825,7 +825,7 @@ def impl_simple_binary_op(ctxt, fnname, *extraargs):
     ctxt.Py_DECREF(v)
     ctxt.Py_DECREF(w)
     ctxt.SET_TOP(x)
-    true_ctxt, false_ctxt = ctxt.add_conditional(x, '!=', NULL(), likely=True)
+    true_ctxt, false_ctxt = ctxt.add_conditional(x, '!=', ctxt.NULL(), likely=True)
     true_ctxt.DISPATCH()
     false_ctxt.break_to_on_error()
 
@@ -852,7 +852,7 @@ def impl_simple_INPLACE_op(ctxt, fnname, *extraargs):
     ctxt.Py_DECREF(v)
     ctxt.Py_DECREF(w)
     ctxt.SET_TOP(x)
-    true_ctxt, false_ctxt = ctxt.add_conditional(x, '!=', NULL(), likely=True)
+    true_ctxt, false_ctxt = ctxt.add_conditional(x, '!=', ctxt.NULL(), likely=True)
     true_ctxt.DISPATCH()
     false_ctxt.break_to_on_error()
 
@@ -883,7 +883,7 @@ class LOAD_FAST(BytecodeOp):
         #        PyTuple_GetItem(co->co_varnames, oparg));
         #    break;
         ctxt.assign(x, ctxt.GETLOCAL(self.arg))
-        true_ctxt, false_ctxt = ctxt.add_conditional(x, '!=', NULL(), likely=True)
+        true_ctxt, false_ctxt = ctxt.add_conditional(x, '!=', ctxt.NULL(), likely=True)
         true_ctxt.Py_INCREF(x)
         true_ctxt.PUSH(x)
         true_ctxt.FAST_DISPATCH()
@@ -893,7 +893,7 @@ class LOAD_FAST(BytecodeOp):
                              ConstString(UNBOUNDLOCAL_ERROR_MSG),
                              Call('PyTuple_GetItem',
                                   (FieldDereference(co, 'co_varnames'),
-                                   ConstInt(self.arg)))))
+                                   ConstInt(ctxt.types.int, self.arg)))))
         false_ctxt.break_to_on_error()
 
 class LOAD_CONST(BytecodeOp):
@@ -1126,7 +1126,8 @@ class STORE_SUBSCR(BytecodeOp):
         ctxt.Py_DECREF(u)
         ctxt.Py_DECREF(v)
         ctxt.Py_DECREF(w)
-        true_ctxt, false_ctxt = ctxt.add_conditional(err, '==', ConstInt(0), likely=True)
+        true_ctxt, false_ctxt = ctxt.add_conditional(
+            err, '==', ConstInt(ctxt.types.int, 0), likely=True)
         true_ctxt.DISPATCH()
         false_ctxt.break_to_on_error()
 
@@ -1162,8 +1163,8 @@ class RAISE_VARARGS(BytecodeOp):
         # replaced with new locals
         #   w -> exc
         #   v -> cause
-        ctxt.assign(v, NULL())
-        ctxt.assign(w, NULL())
+        ctxt.assign(v, ctxt.NULL())
+        ctxt.assign(w, ctxt.NULL())
         if self.arg == 2:
             ctxt.POP(cause)
             ctxt.POP(exc)
@@ -1171,10 +1172,10 @@ class RAISE_VARARGS(BytecodeOp):
             ctxt.break_to_on_error()
         elif self.arg == 1:
             ctxt.POP(exc)
-            do_raise(exc, NULL())
+            do_raise(exc, ctxt.NULL())
             ctxt.break_to_on_error()
         elif self.arg == 0:
-            do_raise(NULL(), NULL()) # reraise
+            do_raise(NULL(), ctxt.NULL()) # reraise
             ctxt.break_to_on_error()
         else:
             raise UnrollingError('bad RAISE_VARARGS oparg: %i' % self.arg)
@@ -1268,7 +1269,7 @@ def unpack_iterable(ctxt, v, argcnt, argcntafter, offset):
 
     ctxt.add_call(it, 'PyObject_GetIter', (v,))
     error_ctxt, non_null_ctxt = \
-        ctxt.add_conditional(it, '==', NULL(), likely=False,
+        ctxt.add_conditional(it, '==', ctxt.NULL(), likely=False,
                              true_label='PyObject_GetIter_failed',
                              false_label='PyObject_GetIter_succeeded')
 
@@ -1279,7 +1280,7 @@ def unpack_iterable(ctxt, v, argcnt, argcntafter, offset):
     for i in range(argcnt):
         ctxt.add_call(w, 'PyIter_Next', (it, ))
         is_null_ctxt, ctxt = \
-            ctxt.add_conditional(w, '==', NULL(),
+            ctxt.add_conditional(w, '==', ctxt.NULL(),
                                  true_label='call_%i_to_PyIter_Next_returned_NULL' % i,
                                  false_label='call_%i_to_PyIter_Next_returned_non_NULL' % i)
         # ^^^ note reassignment of ctxt
@@ -1289,7 +1290,7 @@ def unpack_iterable(ctxt, v, argcnt, argcntafter, offset):
         no_err_occurred, err_occurred = \
             is_null_ctxt.add_conditional(UnaryExpr('!', Call('PyErr_Occurred', ())),
                                          '!=',
-                                         ConstInt(0),
+                                         ConstInt(ctxt.types.int, 0),
                                          true_label='PyErr_Occurred_is_false',
                                          false_label='PyErr_Occurred_is_true')
 
@@ -1313,12 +1314,12 @@ def unpack_iterable(ctxt, v, argcnt, argcntafter, offset):
     assert argcntafter == -1 # FIXME: only supporting UNPACK_SEQUENCE for now
     ctxt.add_comment('We better have exhausted the iterator now.')
     ctxt.add_call(w, 'PyIter_Next', (it, ))
-    is_null_ctxt2, non_null_ctxt2 = ctxt.add_conditional(w, '==', NULL())
+    is_null_ctxt2, non_null_ctxt2 = ctxt.add_conditional(w, '==', ctxt.NULL())
 
     # is_null_ctxt2:
     err_occurred2, no_err_occurred2 = \
         is_null_ctxt2.add_conditional(Call('PyErr_Occurred', ()),
-                                      '!=', ConstInt(0))
+                                      '!=', ConstInt(ctxt.types.int, 0))
 
     impl_goto_error(err_occurred2, i)
 
@@ -1378,7 +1379,7 @@ class UNPACK_SEQUENCE(BytecodeOp):
         is_tuple = ctxt.add_local(ctxt.types.int, 'is_tuple')
         ctxt.add_call(is_tuple, 'PyTuple_CheckExact', (v, ))
         is_tuple_ctxt, not_tuple_ctxt = \
-            ctxt.add_conditional(is_tuple, '!=', ConstInt(0),
+            ctxt.add_conditional(is_tuple, '!=', ConstInt(ctxt.types.int, 0),
                                  true_label='is_tuple',
                                  false_label='is_not_tuple')
 
@@ -1386,7 +1387,7 @@ class UNPACK_SEQUENCE(BytecodeOp):
         tuple_size = ctxt.add_local(ctxt.types.Py_ssize_t, 'tuple_size')
         ctxt.add_call(tuple_size, 'PyTuple_GET_SIZE', (v, ))
         correct_tuple_size, incorrect_tuple_size = \
-            ctxt.add_conditional(tuple_size, '==', ConstInt(self.arg),
+            ctxt.add_conditional(tuple_size, '==', ConstInt(ctxt.types.int, self.arg),
                                  true_label='correct_tuple_size',
                                  false_label='incorrect_tuple_size')
 
@@ -1394,7 +1395,7 @@ class UNPACK_SEQUENCE(BytecodeOp):
         oparg = self.arg
         while oparg:
             oparg -= 1
-            ctxt.add_call(w, 'PyTuple_GET_ITEM', (v, ConstInt(oparg)))
+            ctxt.add_call(w, 'PyTuple_GET_ITEM', (v, ConstInt(ctxt.types.int, oparg)))
             ctxt.Py_INCREF(w)
             ctxt.PUSH(w)
         ctxt.Py_DECREF(v)
@@ -1407,7 +1408,7 @@ class UNPACK_SEQUENCE(BytecodeOp):
         is_list = ctxt.add_local(ctxt.types.int, 'is_list')
         ctxt.add_call(is_list, 'PyList_CheckExact', (v, ))
         is_list_ctxt, not_list_ctxt = \
-            ctxt.add_conditional(is_list, '!=', ConstInt(0),
+            ctxt.add_conditional(is_list, '!=', ConstInt(ctxt.types.int, 0),
                                  true_label='is_list',
                                  false_label='unpack_iterable')
 
@@ -1415,7 +1416,7 @@ class UNPACK_SEQUENCE(BytecodeOp):
         list_size = ctxt.add_local(ctxt.types.Py_ssize_t, 'list_size')
         ctxt.add_call(list_size, 'PyList_GET_SIZE', (v, ))
         correct_list_size, incorrect_list_size = \
-            ctxt.add_conditional(list_size, '==', ConstInt(self.arg),
+            ctxt.add_conditional(list_size, '==', ConstInt(ctxt.types.int, self.arg),
                                  true_label='correct_list_size',
                                  false_label='incorrect_list_size')
 
@@ -1423,7 +1424,9 @@ class UNPACK_SEQUENCE(BytecodeOp):
         oparg = self.arg
         while oparg:
             oparg -= 1
-            ctxt.add_call(w, 'PyList_GET_ITEM', (v, ConstInt(oparg)))
+            ctxt.add_call(w,
+                          'PyList_GET_ITEM',
+                          (v, ConstInt(ctxt.types.int, oparg)))
             ctxt.Py_INCREF(w)
             ctxt.PUSH(w)
         ctxt.Py_DECREF(v)
@@ -1525,7 +1528,8 @@ class LOAD_GLOBAL(BytecodeOp):
             # Simplify optimization by deferring inlining the impl until
             # later:
             ctxt.add_call(x, 'impl_LOAD_GLOBAL', (ctxt.compiler.f, w, ))
-            true_ctxt, false_ctxt = ctxt.add_conditional(x, '!=', NULL(), likely=True)
+            true_ctxt, false_ctxt = ctxt.add_conditional(
+                x, '!=', NULL(ctxt.types.PyObjectPtr), likely=True)
             true_ctxt.PUSH(x)
             true_ctxt.DISPATCH()
             false_ctxt.break_to_on_error()
@@ -1538,7 +1542,7 @@ class LOAD_GLOBAL(BytecodeOp):
                                (Expression('(PyDictObject *)f->f_globals'),
                                 Expression('(PyDictObject *)f->f_builtins'),
                                 w))
-            true_ctxt2, false_ctxt2 = true_ctxt.add_conditional(x, '==', NULL())
+            true_ctxt2, false_ctxt2 = true_ctxt.add_conditional(x, '==', ctxt.NULL())
             true_ctxt2.writeln('        if (!PyErr_Occurred())')
             true_ctxt2.writeln('            format_exc_check_arg(PyExc_NameError,')
             true_ctxt2.writeln('                                 GLOBAL_NAME_ERROR_MSG, w);')
@@ -1592,12 +1596,12 @@ class BUILD_TUPLE(BytecodeOp):
         #         DISPATCH();
         #     }
         #     break;
-        ctxt.add_call(x, 'PyTuple_New', (ConstInt(self.arg), ))
-        true_ctxt, false_ctxt = ctxt.add_conditional(x, '!=', NULL(), likely=True)
+        ctxt.add_call(x, 'PyTuple_New', (ConstInt(ctxt.types.int, self.arg), ))
+        true_ctxt, false_ctxt = ctxt.add_conditional(x, '!=', ctxt.NULL(), likely=True)
         # unroll the loop:
         for i in range(self.arg-1 , -1, -1):
             true_ctxt.add_call(None, 'PyTuple_SET_ITEM',
-                               (x, ConstInt(i), true_ctxt.TOP()))
+                               (x, ConstInt(ctxt.types.int, i), true_ctxt.TOP()))
             true_ctxt.STACKADJ(-1)
         true_ctxt.PUSH(x)
         true_ctxt.DISPATCH()
@@ -1617,12 +1621,14 @@ class BUILD_LIST(BytecodeOp):
         #        DISPATCH();
         #    }
         #    break;
-        ctxt.add_call(x, 'PyList_New', (ConstInt(self.arg), ))
-        true_ctxt, false_ctxt = ctxt.add_conditional(x, '!=', NULL(), likely=True)
+        ctxt.add_call(x,
+                      'PyList_New',
+                      (ConstInt(ctxt.types.int, self.arg), ))
+        true_ctxt, false_ctxt = ctxt.add_conditional(x, '!=', ctxt.NULL(), likely=True)
         # unroll the loop:
         for i in range(self.arg-1 , -1, -1):
             true_ctxt.add_call(None, 'PyList_SET_ITEM',
-                               (x, ConstInt(i), true_ctxt.TOP()))
+                               (x, ConstInt(ctxt.types.int, i), true_ctxt.TOP()))
             true_ctxt.STACKADJ(-1)
         true_ctxt.PUSH(x)
         true_ctxt.DISPATCH()
@@ -1639,9 +1645,11 @@ class BUILD_MAP(BytecodeOp):
         #    PUSH(x);
         #    if (x != NULL) DISPATCH();
         #    break;
-        ctxt.add_call(x, '_PyDict_NewPresized', (ConstInt(self.arg),) )
+        ctxt.add_call(x,
+                      '_PyDict_NewPresized',
+                      (ConstInt(ctxt.types.Py_ssize_t, self.arg),) )
         ctxt.PUSH(x)
-        true_ctxt, false_ctxt = ctxt.add_conditional(x, '!=', NULL(), likely=True)
+        true_ctxt, false_ctxt = ctxt.add_conditional(x, '!=', ctxt.NULL(), likely=True)
         true_ctxt.DISPATCH()
         false_ctxt.break_to_on_error()
 
@@ -1671,7 +1679,8 @@ class STORE_MAP(BytecodeOp):
         ctxt.add_call(err, 'PyDict_SetItem', (v, w, u))
         ctxt.Py_DECREF(u)
         ctxt.Py_DECREF(w)
-        true_ctxt, false_ctxt = ctxt.add_conditional(err, '==', ConstInt(0))
+        true_ctxt, false_ctxt = ctxt.add_conditional(
+            err, '==', ConstInt(ctxt.types.int, 0))
         true_ctxt.DISPATCH()
         false_ctxt.break_to_on_error()
 
@@ -1697,7 +1706,7 @@ class LOAD_ATTR(BytecodeOp):
         ctxt.add_call(x, 'PyObject_GetAttr', (v, w))
         ctxt.Py_DECREF(v)
         ctxt.SET_TOP(x)
-        true_ctxt, false_ctxt = ctxt.add_conditional(x, '!=', NULL(), likely=True)
+        true_ctxt, false_ctxt = ctxt.add_conditional(x, '!=', ctxt.NULL(), likely=True)
         true_ctxt.DISPATCH()
         false_ctxt.break_to_on_error()
 
@@ -1723,7 +1732,7 @@ class COMPARE_OP(BytecodeOp):
         merge_ctxt.Py_DECREF(v)
         merge_ctxt.Py_DECREF(w)
         merge_ctxt.SET_TOP(x)
-        true_ctxt, false_ctxt = merge_ctxt.add_conditional(x, '==', NULL())
+        true_ctxt, false_ctxt = merge_ctxt.add_conditional(x, '==', ctxt.NULL())
         true_ctxt.break_to_on_error()
         false_ctxt.DISPATCH()
 
@@ -1744,13 +1753,13 @@ class COMPARE_OP(BytecodeOp):
         elif arg == PyCmp_IN:
             ctxt.add_call(res, 'PySequence_Contains', (w, v))
             true_ctxt, false_ctxt = ctxt.add_conditional(res, '<', ConstInt(0))
-            true_ctxt.assign(x, NULL())
+            true_ctxt.assign(x, ctxt.NULL())
             true_ctxt.add_jump(merge_ctxt)
             next_ctxt = false_ctxt
         elif arg == PyCmp_NOT_IN:
             ctxt.add_call(res, 'PySequence_Contains', (w, v))
             true_ctxt, false_ctxt = ctxt.add_conditional(res, '<', ConstInt(0))
-            true_ctxt.assign(x, NULL())
+            true_ctxt.assign(x, ctxt.NULL())
             true_ctxt.add_jump(merge_ctxt.addr)
             false_ctxt.assign(res, Expression('!%s' % res)) # FIXME
             next_ctxt = false_ctxt
@@ -1875,7 +1884,7 @@ class GET_ITER(BytecodeOp):
         x = ctxt.compiler.x
         ctxt.add_call(x, 'PyObject_GetIter', (v,))
         ctxt.Py_DECREF(v)
-        true_ctxt, false_ctxt = ctxt.add_conditional(x, '!=', NULL(), likely=True)
+        true_ctxt, false_ctxt = ctxt.add_conditional(x, '!=', ctxt.NULL(), likely=True)
         true_ctxt.SET_TOP(x)
         true_ctxt.DISPATCH()
         false_ctxt.STACKADJ(-1)
@@ -1910,7 +1919,7 @@ class FOR_ITER(BytecodeOp):
         x = ctxt.compiler.x
         ctxt.add_call(x, 'INVOKE_tp_iternext', (v,)) # FIXME: add macro
         true_ctxt, false_ctxt = \
-            ctxt.add_conditional(x, '!=', NULL(), likely=True,
+            ctxt.add_conditional(x, '!=', ctxt.NULL(), likely=True,
                                  true_label='nonnull_tp_iternext',
                                  false_label='null_tp_iternext')
 
@@ -1919,14 +1928,14 @@ class FOR_ITER(BytecodeOp):
 
         true_ctxt2, false_ctxt2 = \
             false_ctxt.add_conditional(Call('PyErr_Occurred', ()),
-                                       '!=', ConstInt(0),
+                                       '!=', ConstInt(ctxt.types.int, 0),
                                        true_label='PyErr_Occurred',
                                        false_label='not_PyErr_Occurred')
 
         true_ctxt3, false_ctxt3 = \
             true_ctxt2.add_conditional(Call('PyErr_ExceptionMatches',
                                             (Global(ctxt.types.PyObjectPtr, 'PyExc_StopIteration'), )),
-                                       '==', ConstInt(0),
+                                       '==', ConstInt(ctxt.types.int, 0),
                                        true_label='is_StopIteration',
                                        false_label='is_not_StopIteration')
         true_ctxt3.break_to_on_error()
@@ -2009,7 +2018,7 @@ class CALL_FUNCTION(BytecodeOp):
         callargs = tuple([func] + args[::-1] + kwargs)
         ctxt.add_call(x, 'impl_CALL_FUNCTION_na%i_nk%i' % (na, nk),
                       callargs)
-        true_ctxt, false_ctxt = ctxt.add_conditional(x, '!=', NULL(), likely=True)
+        true_ctxt, false_ctxt = ctxt.add_conditional(x, '!=', ctxt.NULL(), likely=True)
         true_ctxt.PUSH(x)
         true_ctxt.DISPATCH()
         false_ctxt.break_to_on_error()
@@ -2052,7 +2061,7 @@ class BUILD_SLICE(BytecodeOp):
         if self.arg == 3:
             ctxt.POP(w)
         else:
-            ctxt.assign(w, NULL())
+            ctxt.assign(w, ctxt.NULL())
         ctxt.POP(v)
         ctxt.assign(u, ctxt.TOP())
         ctxt.add_call(x, 'PySlice_New', (u, v, w))
@@ -2060,7 +2069,7 @@ class BUILD_SLICE(BytecodeOp):
         ctxt.Py_DECREF(v)
         ctxt.Py_XDECREF(w)
         ctxt.SET_TOP(x)
-        true_ctxt, false_ctxt = ctxt.add_conditional(x, '!=', NULL(), likely=True)
+        true_ctxt, false_ctxt = ctxt.add_conditional(x, '!=', ctxt.NULL(), likely=True)
         true_ctxt.DISPATCH()
         false_ctxt.break_to_on_error()
 

@@ -144,7 +144,7 @@ class Compiler:
 
         self.types = Types()
         self.globals_ = Globals(self.types)
-        self.ircfg = IrCFG()
+        self.ircfg = IrCFG(self.types.PyObjectPtr, 'my_eval')
         self.locals = []
         self.stack = []
         self.f = self.ircfg.add_param(self.types.PyFrameObjectPtr, 'f')
@@ -254,7 +254,7 @@ class Compiler:
             # "local = f->f_localsplus[%i]"
             self.curcblock.add_assignment(
                 local,
-                ArrayLookup(self.f_localsplus, ConstInt(i)))
+                ArrayLookup(self.f_localsplus, ConstInt(self.types.int, i)))
             # FIXME assume the initial arguments are non-NULL, somehow
         self.curcblock.writeln()
 
@@ -275,14 +275,15 @@ class Compiler:
         '''
 
         self.curcblock.writeln()
-        self.curcblock.add_assignment(self.retval, NULL())
+        self.curcblock.add_assignment(self.retval, NULL(self.types.PyObjectPtr))
         self.curcblock.add_assignment(self.co, FieldDereference(self.f, 'f_code'))
         self.curcblock.add_assignment(self.names, FieldDereference(self.co, 'co_names'))
         self.curcblock.add_assignment(self.consts, FieldDereference(self.co, 'co_consts'))
 
-        self.curcblock.add_assignment(self.err, ConstInt(0))
-        self.curcblock.add_assignment(self.x, Const('Py_None')) # Not a reference, just anything non-NULL
-        self.curcblock.add_assignment(self.w,  NULL())
+        self.curcblock.add_assignment(self.err, ConstInt(self.types.int, 0))
+        self.curcblock.add_assignment(self.x,
+                                      self.globals_.Py_None) # Not a reference, just anything non-NULL
+        self.curcblock.add_assignment(self.w,  NULL(self.types.PyObjectPtr))
 
         '''
         throwblock, nothrowblock = \
@@ -320,7 +321,8 @@ class Compiler:
                 else:
                     self.curcblock.add_call(arr[i],
                                             'PyTuple_GET_ITEM',
-                                            (tuplevar, ConstInt(i)))
+                                            (tuplevar,
+                                             ConstInt(self.types.int, i)))
                 # FIXME: INCREF/DECREF pairs
         setup_fast_refs(self.fast_names, CoName,
                         self.names, co.co_names)
@@ -331,7 +333,7 @@ class Compiler:
         self.curcblock.add_comment('beginning of unrolled bytecode')
 
         # FIXME: computed jump to (f->f_lasti + 1)
-        self.curcblock.add_jump(self.get_bytecode_label(0))
+        self.curcblock.add_jump(self.ircfg.addr_to_block[self.get_bytecode_label(0)])
 
         for addr in sorted(bcfg.addr_to_block.keys()):
             block = bcfg.addr_to_block[addr]
@@ -345,8 +347,12 @@ class Compiler:
         op = self.bcfg.addr_to_op[offset]
         return 'bytecode_offset_%i_%s' % (offset, op.opcodename())
 
+    def get_block_at_offset(self, offset):
+        label = self.get_bytecode_label(offset)
+        return self.ircfg.addr_to_block[label]
+
     def compile_bytecode(self, co, bcfg, op):
-        self.curcblock = self.ircfg.addr_to_block[self.get_bytecode_label(op.addr)]
+        self.curcblock = self.get_block_at_offset(op.addr)
         self.curcblock.add_comment(self.get_bytecode_label(op.addr))
 
         if op.addr in bcfg.linestarts:
@@ -380,7 +386,7 @@ class Compiler:
 
         self.curcblock.add_assignment(FieldDereference(self.f,
                                                        'f_lasti'),
-                                      ConstInt(op.addr))
+                                      ConstInt(self.types.int, op.addr))
 
         # fast_next_opcode has line-by-line tracing support
         # Since we know which opcodes change the line number, we can
@@ -477,6 +483,8 @@ class OpcodeContext:
             self.add_comment('  %s; stack depth was %i now %i'
                              % (op, oldvheight, newvheight))
 
+    def NULL(self):
+        return NULL(self.types.PyObjectPtr)
 
     def INSTR_OFFSET(self):
         return self.opcode.get_next_addr()
@@ -529,18 +537,20 @@ class OpcodeContext:
 
     def JUMPTO(self, arg):
         self.add_comment('JUMPTO')
-        self.curcblock.add_jump(self.compiler.get_bytecode_label(arg))
+        self.curcblock.add_jump(
+            self.compiler.get_block_at_offset(arg))
 
     def JUMPBY(self, arg):
         self.add_comment('JUMPBY')
-        self.curcblock.add_jump(self.compiler.get_bytecode_label(self.opcode.get_next_addr() + arg))
+        self.curcblock.add_jump(
+            self.compiler.get_block_at_offset(self.opcode.get_next_addr() + arg))
 
     def block_setup(self, op, type_, handler, level):
         self.add_comment('block_setup: %s %s %s %s' % (op, type_, handler, level))
         self.bstack.append(BStackEntry(op))
 
     def add_jump(self, ctxt):
-        self.curcblock.add_jump(ctxt.curcblock.addr)
+        self.curcblock.add_jump(ctxt.curcblock)
 
     def add_conditional(self, lhs, expr, rhs, likely=None,
                         true_label='true',
@@ -597,7 +607,8 @@ class OpcodeContext:
 
     def FAST_DISPATCH(self):
         self.curcblock.add_jump(
-            self.compiler.get_bytecode_label(self.opcode.get_next_addr()))
+            self.compiler.ircfg.addr_to_block[
+                self.compiler.get_bytecode_label(self.opcode.get_next_addr())])
 
     def UNWIND_BLOCK(self, b):
         # while (STACK_LEVEL() > (b)->b_level) { \
@@ -621,11 +632,11 @@ class OpcodeContext:
         if ctxt.why == WHY_NOT:
             # if (err == 0 && x != NULL) {
             true_ctxt, false_ctxt = \
-                ctxt.add_conditional(self.compiler.err, '==', ConstInt(0),
+                ctxt.add_conditional(self.compiler.err, '==', ConstInt(ctxt.types.int, 0),
                                      true_label='zero_err',
                                      false_label='non_zero_err')
             true_ctxt2, false_ctxt2 = \
-                true_ctxt.add_conditional(self.compiler.x, '!=', NULL(),
+                true_ctxt.add_conditional(self.compiler.x, '!=', NULL(self.types.PyObjectPtr),
                                           true_label='non_null_x',
                                           false_label='null_x')
             # (We leave out the #ifdef CHECKEXC stuff)
@@ -634,13 +645,13 @@ class OpcodeContext:
             false_ctxt.add_jump(false_ctxt2)
             false_ctxt2.set_why('WHY_EXCEPTION')
             false_ctxt2.assign(self.compiler.x, ctxt.globals_.Py_None)
-            false_ctxt2.assign(self.compiler.err, ConstInt(0))
+            false_ctxt2.assign(self.compiler.err, ConstInt(ctxt.types.int, 0))
             ctxt = false_ctxt2
 
         if ctxt.why == WHY_EXCEPTION or ctxt.why == WHY_RERAISE:
             ctxt.add_comment('Double-check exception status')
             true_ctxt, false_ctxt = \
-                ctxt.add_conditional(Call('PyErr_Occurred', ()), '==', ConstInt(0),
+                ctxt.add_conditional(Call('PyErr_Occurred', ()), '==', ConstInt(ctxt.types.int, 0),
                                      true_label='PyErr_Occurred_false',
                                      false_label='PyErr_Occurred_true')
             true_ctxt.add_call(
@@ -675,7 +686,7 @@ class OpcodeContext:
         # Also write the value back into fastlocals within the frame
         # (with the same refcounting handling):
         f_localsplus_item = ArrayLookup(self.compiler.f_localsplus,
-                                        ConstInt(i))
+                                        ConstInt(self.types.int, i))
         self.assign(tmp, f_localsplus_item)
         self.assign(f_localsplus_item, value)
         self.Py_INCREF(value)
@@ -791,7 +802,7 @@ class OpcodeContext:
             self.Py_XDECREF(self.compiler.v)
 
         if self.why != WHY_RETURN:
-            self.assign(self.compiler.retval, NULL())
+            self.assign(self.compiler.retval, NULL(self.types.PyObjectPtr))
 
         self.fast_yield()
 
@@ -840,7 +851,7 @@ class OpcodeContext:
                                            Expression('tstate->c_traceobj'),
                                            Expression('f'),
                                            Expression('PyTrace_RETURN'),
-                                           NULL()))
+                                           NULL(self.types.PyObjectPtr)))
         has_c_tracefunc_ctxt.add_jump(false_ctxt2)
         false_ctxt2.why = has_c_tracefunc_ctxt.why # see "beware!" above
 
@@ -854,7 +865,7 @@ class OpcodeContext:
                                              Expression('tstate->c_profileobj'),
                                              Expression('f'),
                                              Expression('PyTrace_RETURN'),
-                                             NULL()))
+                                             NULL(self.types.PyObjectPtr)))
         else:
             has_c_profilefunc_ctxt.writeln('            if (call_trace(tstate->c_profilefunc,')
             has_c_profilefunc_ctxt.writeln('                                tstate->c_profileobj, f,')

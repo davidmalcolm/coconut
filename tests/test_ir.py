@@ -33,16 +33,17 @@ class IrTests(unittest.TestCase):
         types = IrTypes()
         int_ = types.new_type('int')
 
-        cfg = IrCFG()
+        cfg = IrCFG(int_, 'fn')
 
         x = cfg.add_param(int_, 'x')
 
         b_entry = cfg.add_block('entry')
-        b_on_true, b_on_false = b_entry.add_conditional(x, '<', ConstInt(3))
+        b_on_true, b_on_false = b_entry.add_conditional(
+            x, '<', ConstInt(int_, 3))
 
-        b_on_true.add_return(BinaryExpr(x, '*', ConstInt(2)))
+        b_on_true.add_return(BinaryExpr(int_, x, '*', ConstInt(int_, 2)))
 
-        b_on_false.add_return(BinaryExpr(x, '-', ConstInt(5)))
+        b_on_false.add_return(BinaryExpr(int_, x, '-', ConstInt(int_, 5)))
 
         self.assertEqual(len(cfg.blocks), 3)
         self.assertEqual(len(cfg.edges), 2)

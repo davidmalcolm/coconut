@@ -26,8 +26,11 @@ from coconut.cwriter import CWriter
 WRITE_BLOCKS_INLINE = 1
 
 class IrCFG(CFG):
-    def __init__(self):
+    def __init__(self, returntype, fnname):
         CFG.__init__(self)
+        self.returntype = returntype
+        self.fnname = fnname
+
         # keep an ordered list of blocks
         self.blocks = []
         self.params = []
@@ -59,6 +62,9 @@ class IrCFG(CFG):
         return s.getvalue()
 
     def to_writer(self, w):
+        w.writeln('%s\n' % self.returntype.to_c())
+        c_params = ', '.join(param.to_c() for param in self.params)
+        w.writeln('%s(%s)' % (self.fnname, c_params))
         w.writeln('{')
         w.indent()
         for local in self.locals:
@@ -132,10 +138,10 @@ class IrCFG(CFG):
         for block in self.blocks:
             for op in block.ops:
                 if isinstance(op, Conditional):
-                    add_edge(op.true_addr)
-                    add_edge(op.false_addr)
+                    add_edge(op.true_block.addr)
+                    add_edge(op.false_block.addr)
                 if isinstance(op, Jump):
-                    add_edge(op.dest_addr)
+                    add_edge(op.dest_block.addr)
         return edges
 
     def calc_edges_by_dest(self):
@@ -191,7 +197,7 @@ class IrBlock(Block):
         true_block = self.cfg.add_block(true_label)
         false_block = self.cfg.add_block(false_label)
         self.ops.append(Conditional(lhs, expr, rhs,
-                                    true_block.addr, false_block.addr,
+                                    true_block, false_block,
                                     likely))
         self.cfg.add_edge(Edge(self, true_block))
         self.cfg.add_edge(Edge(self, false_block))
@@ -229,9 +235,10 @@ class IrBlock(Block):
         self.ops.append(call)
         return call
 
-    def add_jump(self, dest_addr):
-        self.ops.append(Jump(dest_addr))
-        self.cfg.add_edge(Edge(self, self.cfg.addr_to_block[dest_addr]))
+    def add_jump(self, dest_block):
+        assert isinstance(dest_block, IrBlock)
+        self.ops.append(Jump(dest_block))
+        self.cfg.add_edge(Edge(self, dest_block))
 
     def add_return(self, expr):
         self.ops.append(Return(expr))
@@ -283,17 +290,21 @@ class IrTypes:
         self.types = OrderedDict()
 
     def new_type(self, name):
-        t = IrType(name)
-        self.types[name] = t
+        t = IrType(self, name)
+        self._add(t)
         return t
 
     def new_struct(self, name):
-        s = IrStruct(name)
-        self.types[name] = s
+        s = IrStruct(self, name)
+        self._add(s)
         return s
 
+    def _add(self, newtype):
+        self.types[newtype.name] = newtype
+
 class IrType:
-    def __init__(self, name):
+    def __init__(self, types, name):
+        self.types = types
         self.name = name
         self._ptr_type = None
 
@@ -305,12 +316,13 @@ class IrType:
 
     def get_pointer(self):
         if self._ptr_type is None:
-            self._ptr_type = IrPointerType(self)
+            self._ptr_type = IrPointerType(self.types, self)
+            self.types._add(self._ptr_type)
         return self._ptr_type
 
 class IrStruct(IrType):
-    def __init__(self, name):
-        IrType.__init__(self, name)
+    def __init__(self, types, name):
+        IrType.__init__(self, types, name)
         self.fields = []
 
     def setup_fields(self, fieldinfo):
@@ -318,8 +330,8 @@ class IrStruct(IrType):
             self.fields.append(IrField(type_, name))
 
 class IrPointerType(IrType):
-    def __init__(self, other):
-        IrType.__init__(self, '%s *' % other.name)
+    def __init__(self, types, other):
+        IrType.__init__(self, types, '%s *' % other.name)
         self.other = other
 
     def __repr__(self):
@@ -432,11 +444,12 @@ class AddressOf(Expression):
         return '&%s' % self.lvalue.to_c()
 
 class Const(Expression):
-    def __init__(self, value):
+    def __init__(self, type_, value):
+        self.type_ = type_
         self.value = value
 
     def __repr__(self):
-        return 'Const(value=%r)' % self.value
+        return 'Const(type_=%r, value=%r)' % (self.type_, self.value)
 
     def __hash__(self):
         return hash(self.value)
@@ -486,6 +499,9 @@ class EnumValue(ConstInt):
         return self.name
 
 class ConstString(Const):
+    def __init__(self, value):
+        self.value = value
+
     def to_c(self):
         return '"%s"' % self.value
 
@@ -493,8 +509,8 @@ class ConstString(Const):
         return 'ConstString(%r)' % self.value
 
 class NULL(ConstInt):
-    def __init__(self):
-        ConstInt.__init__(self, 0)
+    def __init__(self, type_):
+        ConstInt.__init__(self, type_, 0)
 
     def __repr__(self):
         return 'NULL()'
@@ -541,10 +557,12 @@ class UnaryExpr(Expression):
             % (self.kind, self.expr)
 
 class BinaryExpr(Expression):
-    def __init__(self, lhs, expr, rhs):
+    def __init__(self, type_, lhs, expr, rhs):
+        assert isinstance(type_, IrType)
         assert isinstance(lhs, Expression)
         assert expr in ('+', '-', '*', '/') # for now
         assert isinstance(rhs, Expression)
+        self.type_ = type_
         self.lhs = lhs
         self.expr = expr
         self.rhs = rhs
@@ -553,8 +571,8 @@ class BinaryExpr(Expression):
         return '%s %s %s' % (self.lhs.to_c(), self.expr, self.rhs.to_c())
 
     def __repr__(self):
-        return 'BinaryExpr(lhs=%r, expr=%r, rhs=%r)' \
-            % (self.lhs, self.expr, self.rhs)
+        return 'BinaryExpr(type_=%r, lhs=%r, expr=%r, rhs=%r)' \
+            % (self.type_, self.lhs, self.expr, self.rhs)
 
 class Call(Expression):
     def __init__(self, fnname, args):
@@ -719,21 +737,23 @@ class Assignment(IrOp):
         self.lhs = visitor(self.lhs)
 
 class Conditional(IrOp):
-    def __init__(self, lhs, expr, rhs, true_addr, false_addr, likely=None):
+    def __init__(self, lhs, expr, rhs, true_block, false_block, likely=None):
         assert isinstance(lhs, Expression)
         assert expr in ('==', '!=', '<', '<=', '>', '>=', '&')
         assert isinstance(rhs, Expression)
+        assert isinstance(true_block, IrBlock)
+        assert isinstance(false_block, IrBlock)
         self.lhs = lhs
         self.expr = expr
         self.rhs = rhs
-        self.true_addr = true_addr
-        self.false_addr = false_addr
+        self.true_block = true_block
+        self.false_block = false_block
         self.likely = likely
 
     def __repr__(self):
         return ('Conditional(%r, %r, %r, %r, %r)'
                 % (self.lhs, self.expr, self.rhs,
-                   self.true_addr, self.false_addr))
+                   self.true_block, self.false_block))
 
     def write(self, w):
         def write_dest_addr(addr):
@@ -756,9 +776,9 @@ class Conditional(IrOp):
         if self.likely is False:
             clause = 'UNLIKELY(%s)' % clause
         w.writeln('if (%s) {' % clause)
-        write_dest_addr(self.true_addr)
+        write_dest_addr(self.true_block.addr)
         w.writeln('} else {')
-        write_dest_addr(self.false_addr)
+        write_dest_addr(self.false_block.addr)
         w.writeln('}')
 
     def visit_read_exprs(self, visitor):
@@ -790,19 +810,20 @@ class Eval(IrOp):
         w.writeln('(void)%s;' % self.expr.to_c())
 
 class Jump(IrOp):
-    def __init__(self, dest_addr):
-        self.dest_addr = dest_addr
+    def __init__(self, dest_block):
+        assert isinstance(dest_block, IrBlock)
+        self.dest_block = dest_block
 
     def __repr__(self):
-        return 'Jump(%r)' % self.dest_addr
+        return 'Jump(%r)' % self.dest_block
 
     def __eq__(self, other):
         if isinstance(other, Jump):
-            if self.dest_addr == other.dest_addr:
+            if self.dest_block == other.dest_block:
                 return True
 
     def write(self, w):
-        w.writeln('goto %s;' % self.dest_addr)
+        w.writeln('goto %s;' % self.dest_block.addr)
 
     def visit_read_exprs(self, visitor):
         pass

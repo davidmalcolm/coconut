@@ -58,7 +58,7 @@ class CompilationTests(unittest.TestCase):
 
     def assert_is_jump(self, op, dstblock):
         self.assertIsInstance(op, Jump)
-        self.assertEqual(op.dest_addr, dstblock.addr)
+        self.assertEqual(op.dest_block, dstblock)
 
     def test_pass(self):
         def f():
