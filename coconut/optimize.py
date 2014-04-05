@@ -15,12 +15,10 @@
 #   along with this program.  If not, see
 #   <http://www.gnu.org/licenses/>.
 
-from coconut.bytecode import Py_True, Py_False, Py_None
-
-def expr_for_python_obj(obj):
+def expr_for_python_obj(obj, globals_):
     if obj is True:
-        return Py_True
+        return globals_.Py_True
     if obj is False:
-        return Py_False
+        return globals_.Py_False
     if obj is None:
-        return Py_None
+        return globals_.Py_None

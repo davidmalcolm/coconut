@@ -19,6 +19,7 @@ class CWriter:
     def __init__(self, out):
         self.out = out
         self._indent = 0
+        self.inline_addrs = set()
 
     def writeln(self, line=None):
         if line:

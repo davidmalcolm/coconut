@@ -17,7 +17,7 @@
 
 import unittest
 
-from coconut.ir import IrCFG, ConstInt, BinaryExpr
+from coconut.ir import IrCFG, ConstInt, BinaryExpr, IrTypes
 
 class IrTests(unittest.TestCase):
     def test_conditional(self):
@@ -30,9 +30,12 @@ class IrTests(unittest.TestCase):
         #      else
         #          return x - 5;
         #   }
+        types = IrTypes()
+        int_ = types.new_type('int')
+
         cfg = IrCFG()
 
-        x = cfg.add_param('int', 'x')
+        x = cfg.add_param(int_, 'x')
 
         b_entry = cfg.add_block('entry')
         b_on_true, b_on_false = b_entry.add_conditional(x, '<', ConstInt(3))
@@ -47,8 +50,8 @@ class IrTests(unittest.TestCase):
         self.assertEqual(len(b_entry.pred_edges), 0)
         self.assertEqual(len(b_entry.succ_edges), 2)
         self.assertEqual(len(b_entry.ops), 1)
-        self.assertEqual(str(b_entry.ops[0]),
-                         "Conditional(Param(type_='int', name='x'), '<', ConstInt(3), 'true', 'false')")
+        self.assertEqual(b_entry.ops[0].to_c(),
+                         'if (x < 3) {\n    goto true;\n} else {\n    goto false;\n}\n')
 
         self.assertEqual(len(b_on_true.pred_edges), 1)
         self.assertEqual(len(b_on_true.succ_edges), 0)

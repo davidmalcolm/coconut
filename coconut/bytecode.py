@@ -24,13 +24,17 @@ from coconut.cfg import CFG, Block, Edge, Op
 from coconut.dot import to_html, _dot_column
 from coconut.ir import \
     NULL, Expression, ConstInt, ConstString, Global, \
-    Call, FieldDereference, UnaryExpr, EnumValue, Cast
+    Call, FieldDereference, UnaryExpr, EnumValue, Cast, AddressOf
 
 # Globals
-Py_False = Cast(Global('struct _longobject', '_Py_FalseStruct'), 'PyObject *')
-Py_True = Cast(Global('struct _longobject', '_Py_TrueStruct'), 'PyObject *')
-Py_None = Global('PyObject *', 'Py_None')
-PyExc_ValueError = Global('PyObject *', 'PyExc_ValueError')
+class Globals:
+    def __init__(self, types):
+        self.Py_False = Cast(AddressOf(Global(types.PyLongObject, '_Py_FalseStruct')),
+                             types.PyObjectPtr)
+        self.Py_True = Cast(AddressOf(Global(types.PyLongObject, '_Py_TrueStruct')),
+                             types.PyObjectPtr)
+        self.Py_None = Global(types.PyObjectPtr, 'Py_None')
+        self.PyExc_ValueError = Global(types.PyObjectPtr, 'PyExc_ValueError')
 
 # Constants
 # From object.h: Rich comparison opcodes:
@@ -885,7 +889,7 @@ class LOAD_FAST(BytecodeOp):
         true_ctxt.FAST_DISPATCH()
         false_ctxt.add_call(None,
                             'format_exc_check_arg',
-                            (Global('PyObject *', 'PyExc_UnboundLocalError'),
+                            (Global(ctxt.types.PyObjectPtr, 'PyExc_UnboundLocalError'),
                              ConstString(UNBOUNDLOCAL_ERROR_MSG),
                              Call('PyTuple_GetItem',
                                   (FieldDereference(co, 'co_varnames'),
@@ -1002,7 +1006,7 @@ class UNARY_INVERT(BytecodeOp):
 class BINARY_POWER(BytecodeOp):
     def ceval(self, ctxt):
         impl_simple_binary_op(ctxt, 'PyNumber_Power',
-                              Py_None)
+                              ctxt.globals_.Py_None)
 
 class BINARY_MULTIPLY(BytecodeOp):
     def ceval(self, ctxt):
@@ -1057,7 +1061,8 @@ class SET_ADD(BytecodeOp):
 
 class INPLACE_POWER(BytecodeOp):
     def ceval(self, ctxt):
-        impl_simple_INPLACE_op(ctxt, 'PyNumber_InPlacePower', Py_None)
+        impl_simple_INPLACE_op(ctxt, 'PyNumber_InPlacePower',
+                               ctxt.globals_.Py_None)
 class INPLACE_MULTIPLY(BytecodeOp):
     def ceval(self, ctxt):
         impl_simple_INPLACE_op(ctxt, 'PyNumber_InPlaceMultiply')
@@ -1247,8 +1252,8 @@ def unpack_iterable(ctxt, v, argcnt, argcntafter, offset):
         ctxt.Py_XDECREF(it)
         ctxt.add_jump(return_0)
 
-    it = ctxt.add_local('PyObject *', 'it')
-    w = ctxt.add_local('PyObject *', 'w')
+    it = ctxt.add_local(ctxt.types.PyObjectPtr, 'it')
+    w = ctxt.add_local(ctxt.types.PyObjectPtr, 'w')
 
     # we mimic ceval.c's unpack_iterable call by moving the stack pointer up
     # to the height at which all values have been unpacked:
@@ -1291,7 +1296,7 @@ def unpack_iterable(ctxt, v, argcnt, argcntafter, offset):
         # no_err_occurred:
         #   We can precompute the formatted error:
         no_err_occurred.add_call(None, 'PyErr_SetString',  # rather than PyErr_Format
-                                 (PyExc_ValueError,
+                                 (ctxt.globals_.PyExc_ValueError,
                                   ConstString("need more than %d value%s to unpack"
                                               % (i, "" if i == 1 else "s"))))
         impl_goto_error(no_err_occurred, i)
@@ -1323,7 +1328,7 @@ def unpack_iterable(ctxt, v, argcnt, argcntafter, offset):
     # non_null_ctxt2:
     non_null_ctxt2.Py_DECREF(w)
     non_null_ctxt2.add_call(None, 'PyErr_SetString',  # rather than PyErr_Format
-                              (PyExc_ValueError,
+                              (ctxt.globals_.PyExc_ValueError,
                                # precomputed format error:
                                ConstString("too many values to unpack "
                                            "(expected %d)" % argcnt)))
@@ -1370,7 +1375,7 @@ class UNPACK_SEQUENCE(BytecodeOp):
         #                    #    break;
         ctxt.POP(v)
         # FIXME: for now, only support tuples, with no length checking!!!
-        is_tuple = ctxt.add_local('int', 'is_tuple')
+        is_tuple = ctxt.add_local(ctxt.types.int, 'is_tuple')
         ctxt.add_call(is_tuple, 'PyTuple_CheckExact', (v, ))
         is_tuple_ctxt, not_tuple_ctxt = \
             ctxt.add_conditional(is_tuple, '!=', ConstInt(0),
@@ -1378,7 +1383,7 @@ class UNPACK_SEQUENCE(BytecodeOp):
                                  false_label='is_not_tuple')
 
         ctxt = is_tuple_ctxt
-        tuple_size = ctxt.add_local('Py_ssize_t', 'tuple_size')
+        tuple_size = ctxt.add_local(ctxt.types.Py_ssize_t, 'tuple_size')
         ctxt.add_call(tuple_size, 'PyTuple_GET_SIZE', (v, ))
         correct_tuple_size, incorrect_tuple_size = \
             ctxt.add_conditional(tuple_size, '==', ConstInt(self.arg),
@@ -1399,7 +1404,7 @@ class UNPACK_SEQUENCE(BytecodeOp):
         ctxt.add_jump(not_tuple_ctxt)
 
         ctxt = not_tuple_ctxt
-        is_list = ctxt.add_local('int', 'is_list')
+        is_list = ctxt.add_local(ctxt.types.int, 'is_list')
         ctxt.add_call(is_list, 'PyList_CheckExact', (v, ))
         is_list_ctxt, not_list_ctxt = \
             ctxt.add_conditional(is_list, '!=', ConstInt(0),
@@ -1407,7 +1412,7 @@ class UNPACK_SEQUENCE(BytecodeOp):
                                  false_label='unpack_iterable')
 
         ctxt = is_list_ctxt
-        list_size = ctxt.add_local('Py_ssize_t', 'list_size')
+        list_size = ctxt.add_local(ctxt.types.Py_ssize_t, 'list_size')
         ctxt.add_call(list_size, 'PyList_GET_SIZE', (v, ))
         correct_list_size, incorrect_list_size = \
             ctxt.add_conditional(list_size, '==', ConstInt(self.arg),
@@ -1730,7 +1735,7 @@ class COMPARE_OP(BytecodeOp):
         # (without assigning it to v)
         merge_ctxt = ctxt.add_block()
         next_ctxt = ctxt
-        res = ctxt.add_local('int', 'res')
+        res = ctxt.add_local(ctxt.types.int, 'res')
         # ceval.c initializes res to 0, but this isn't necessary
         if arg == PyCmp_IS:
             ctxt.assign(res, Expression('(%s == %s)' % (v.name, w.name))) # FIXME
@@ -1920,7 +1925,7 @@ class FOR_ITER(BytecodeOp):
 
         true_ctxt3, false_ctxt3 = \
             true_ctxt2.add_conditional(Call('PyErr_ExceptionMatches',
-                                            (Global('PyObject *', 'PyExc_StopIteration'), )),
+                                            (Global(ctxt.types.PyObjectPtr, 'PyExc_StopIteration'), )),
                                        '==', ConstInt(0),
                                        true_label='is_StopIteration',
                                        false_label='is_not_StopIteration')

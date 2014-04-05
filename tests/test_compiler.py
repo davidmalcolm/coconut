@@ -45,8 +45,8 @@ class CompilationTests(unittest.TestCase):
     def assert_is_assignment_between_locals(self, op, typename,
                                             lhsname, rhsname):
         self.assert_is_assignment(op, lhsname, rhsname)
-        self.assertEqual(op.lhs.type_, typename)
-        self.assertEqual(op.rhs.type_, typename)
+        self.assertEqual(op.lhs.type_.name, typename)
+        self.assertEqual(op.rhs.type_.name, typename)
 
     def assert_is_Py_INCREF_of_local(self, op, argname):
         self.assertIsInstance(op, Eval)
@@ -143,8 +143,8 @@ class CompilationTests(unittest.TestCase):
         self.assert_is_assignment_between_locals(
             ops[1],
             typename='PyObject *', lhsname='retval', rhsname='stack0')
-        self.assertEqual(repr(ops[-1]),
-                         "Return(Local(type_='PyObject *', name='retval'))")
+        self.assertEqual(ops[-1].to_c(),
+                         'return retval;\n')
 
         csrc = ircfg.to_c()
         # The generated source ought to embed bytecode in comments:
@@ -164,14 +164,14 @@ class CompilationTests(unittest.TestCase):
             return False
         ircfg = compile_(f)
         csrc = ircfg.to_c()
-        self.assertIn('const1_False = (PyObject *)_Py_FalseStruct;', csrc)
+        self.assertIn('const1_False = (PyObject *)&_Py_FalseStruct;', csrc)
 
     def test_true(self):
         def f():
             return True
         ircfg = compile_(f)
         csrc = ircfg.to_c()
-        self.assertIn('const1_True = (PyObject *)_Py_TrueStruct;', csrc)
+        self.assertIn('const1_True = (PyObject *)&_Py_TrueStruct;', csrc)
 
     def test_ROT_TWO(self):
         def f(a, b):

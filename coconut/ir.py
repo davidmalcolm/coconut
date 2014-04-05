@@ -15,6 +15,7 @@
 #   along with this program.  If not, see
 #   <http://www.gnu.org/licenses/>.
 
+from collections import OrderedDict
 from io import StringIO
 import sys
 
@@ -61,12 +62,11 @@ class IrCFG(CFG):
         w.writeln('{')
         w.indent()
         for local in self.locals:
-            w.writeln('%s %s;' % (local.type_, local.name))
+            w.writeln('%s %s;' % (local.type_.to_c(), local.name))
 
         # Simplify the generated C source
         # For blocks that have a single entry in a conditional
         # render the block within the conditional (rather than outside it with a goto)
-        w.inline_addrs = set()
         if WRITE_BLOCKS_INLINE:
             edges_by_dest = self.calc_edges_by_dest()
             # dict mapping from dest_addr to list of [(source Block, source Op]]
@@ -272,6 +272,65 @@ class IrBlock(Block):
                 if not (isinstance(op, Comment) or isinstance(op, Whitespace))]
 
 ############################################################################
+# Types
+############################################################################
+
+class IrTypes:
+    """
+    Container of all types, in registration order
+    """
+    def __init__(self):
+        self.types = OrderedDict()
+
+    def new_type(self, name):
+        t = IrType(name)
+        self.types[name] = t
+        return t
+
+    def new_struct(self, name):
+        s = IrStruct(name)
+        self.types[name] = s
+        return s
+
+class IrType:
+    def __init__(self, name):
+        self.name = name
+        self._ptr_type = None
+
+    def to_c(self):
+        return self.name
+
+    def __repr__(self):
+        return '%s(name=%r)' % (self.__class__.__name__, self.name)
+
+    def get_pointer(self):
+        if self._ptr_type is None:
+            self._ptr_type = IrPointerType(self)
+        return self._ptr_type
+
+class IrStruct(IrType):
+    def __init__(self, name):
+        IrType.__init__(self, name)
+        self.fields = []
+
+    def setup_fields(self, fieldinfo):
+        for type_, name in fieldinfo:
+            self.fields.append(IrField(type_, name))
+
+class IrPointerType(IrType):
+    def __init__(self, other):
+        IrType.__init__(self, '%s *' % other.name)
+        self.other = other
+
+    def __repr__(self):
+        return '%s(other=%r)' % (self.__class__.__name__, self.other)
+
+class IrField:
+    def __init__(self, type_, name):
+        self.type_ = type_
+        self.name = name
+
+############################################################################
 # Expressions
 ############################################################################
 
@@ -282,6 +341,7 @@ class Expression:
 class Cast(Expression):
     # Generic LValue, containing no references needed by the optimizer
     def __init__(self, expr, newtype):
+        assert isinstance(newtype, IrType)
         self.expr = expr
         self.newtype = newtype
 
@@ -289,7 +349,7 @@ class Cast(Expression):
         return 'Cast(expr=%r, newtype=%r)' % (self.code, self.newtype)
 
     def to_c(self):
-        return '(%s)%s' % (self.newtype, self.expr.to_c())
+        return '(%s)%s' % (self.newtype.to_c(), self.expr.to_c())
 
 class LValue(Expression):
     # Generic LValue, containing no references needed by the optimizer
@@ -304,6 +364,7 @@ class LValue(Expression):
 
 class Param(LValue):
     def __init__(self, type_, name):
+        assert isinstance(type_, IrType)
         self.type_ = type_
         self.name = name
         self.ssacounter = 0
@@ -318,6 +379,7 @@ class Param(LValue):
 
 class Local(LValue):
     def __init__(self, type_, name):
+        assert isinstance(type_, IrType)
         self.type_ = type_
         self.name = name
         self.ssacounter = 0
@@ -332,6 +394,7 @@ class Local(LValue):
 
 class Global(LValue):
     def __init__(self, type_, name):
+        assert isinstance(type_, IrType)
         self.type_ = type_
         self.name = name
 
@@ -346,6 +409,7 @@ class SimpleLocal(Expression):
     # like a local, but doesn't participate in SSA; is assumed to
     # have trivial behavior
     def __init__(self, type_, name, is_argument):
+        assert isinstance(type_, IrType)
         self.type_ = type_
         self.name = name
         self.is_argument = is_argument
@@ -356,6 +420,16 @@ class SimpleLocal(Expression):
 
     def to_c(self):
         return self.name
+
+class AddressOf(Expression):
+    def __init__(self, lvalue):
+        self.lvalue = lvalue
+
+    def __repr__(self):
+        return 'AddressOf(lvalue=%r)' % self.lvalue
+
+    def to_c(self):
+        return '&%s' % self.lvalue.to_c()
 
 class Const(Expression):
     def __init__(self, value):

@@ -38,10 +38,12 @@ import sys
 
 from coconut.bytecode import BytecodeCFG, BStackEntry, \
     SETUP_LOOP, EXCEPT_HANDLER, SETUP_EXCEPT, SETUP_FINALLY, \
-    Py_None
+    Globals
+
 from coconut.ir import IrCFG, IrBlock, Expression, Local, Const, ConstInt, \
     ConstString,  NULL, Call, Local, Global, Assignment, LValue, \
-    FieldDereference, ArrayLookup
+    FieldDereference, ArrayLookup, \
+    IrTypes, IrType, IrStruct, IrField
 from coconut.dot import dot_to_png, dot_to_svg
 from coconut.optimize import expr_for_python_obj
 
@@ -76,27 +78,62 @@ WHY_SILENCED =  0x0080 #  Exception silenced by 'with'
 # From code.h:
 CO_GENERATOR    = 0x0020
 
-class Type:
-    pass
-
-class PyObjectPtr(Type):
-    pass
-
 class CoConst(Local):
     # a local PyObject* reference to an entry in the co_consts table
-    def __init__(self, co_consts, idx):
+    def __init__(self, co_consts, type_, idx):
         self.idx = idx
         self.co_const = co_consts[idx]
         name = make_safe_varname('const%i_%s' % (idx, self.co_const))
-        Local.__init__(self, 'PyObject *', name)
+        Local.__init__(self, type_, name)
 
 class CoName(Local):
     # a local PyObject* reference to an entry in the co_names table
-    def __init__(self, co_names, idx):
+    def __init__(self, co_names, type_, idx):
         self.idx = idx
         self.co_name = co_names[idx]
         name = make_safe_varname('name%i_%s' % (idx, self.co_name))
-        Local.__init__(self, 'PyObject *', name)
+        Local.__init__(self, type_, name)
+
+class Types(IrTypes):
+    def __init__(self):
+        IrTypes.__init__(self)
+
+        self.int = self.new_type('int')
+        self.Py_ssize_t = self.new_type('Py_ssize_t')
+
+        self.PyObject = self.new_struct('PyObject')
+        self.PyObjectPtr = self.PyObject.get_pointer()
+
+        self.PyFrameObject = self.new_struct('PyFrameObject')
+        self.PyFrameObjectPtr = self.PyFrameObject.get_pointer()
+
+        self.PyLongObject = self.new_struct('PyLongObject')
+        self.PyLongObjectPtr = self.PyLongObject.get_pointer()
+
+        self.PyCodeObject = self.new_struct('PyCodeObject')
+        self.PyCodeObjectPtr = self.PyCodeObject.get_pointer()
+
+        self.PyThreadState = self.new_struct('PyThreadState')
+        self.PyThreadStatePtr = self.PyThreadState.get_pointer()
+
+        self.PyInterpreterState = self.new_struct('PyInterpreterState')
+        self.PyInterpreterStatePtr = self.PyInterpreterState.get_pointer()
+
+        self.field_dicts = {}
+
+        self.PyThreadState.setup_fields(
+            [
+                #struct _ts *next;
+                (self.PyThreadStatePtr, 'next'),
+
+                #PyInterpreterState *interp;
+                (self.PyInterpreterStatePtr, 'interp'),
+
+                #struct _frame *frame;
+                (self.PyFrameObjectPtr, 'frame'),
+
+                # ...etc; this is only a subset of the fields.
+            ])
 
 class Compiler:
     def __init__(self):
@@ -105,25 +142,27 @@ class Compiler:
         self.dump_stack_activity = False
         self.verify = True
 
+        self.types = Types()
+        self.globals_ = Globals(self.types)
         self.ircfg = IrCFG()
         self.locals = []
         self.stack = []
-        self.f = self.ircfg.add_param('PyFrameObject *', 'f')
-        self.throwflag = self.ircfg.add_param('int', 'throwflag')
+        self.f = self.ircfg.add_param(self.types.PyFrameObjectPtr, 'f')
+        self.throwflag = self.ircfg.add_param(self.types.int, 'throwflag')
         # Error status -- nonzero if error:
-        self.err = self.ircfg.add_local('int', 'err')
+        self.err = self.ircfg.add_local(self.types.int, 'err')
         # Result object -- NULL if error:
-        self.x = self.ircfg.add_local('PyObject *', 'x')
+        self.x = self.ircfg.add_local(self.types.PyObjectPtr, 'x')
         # Temporary objects popped off stack:
-        self.v = self.ircfg.add_local('PyObject *', 'v')
-        self.w = self.ircfg.add_local('PyObject *', 'w')
-        self.u = self.ircfg.add_local('PyObject *', 'u')
-        self.t = self.ircfg.add_local('PyObject *', 't')
-        self.retval = self.ircfg.add_local('PyObject *', 'retval')
-        self.tstate = self.ircfg.add_local('PyThreadState *', 'tstate')
-        self.co = self.ircfg.add_local('PyCodeObject *', 'co')
-        self.names = self.ircfg.add_local('PyObject *', 'names')
-        self.consts = self.ircfg.add_local('PyObject *', 'consts')
+        self.v = self.ircfg.add_local(self.types.PyObjectPtr, 'v')
+        self.w = self.ircfg.add_local(self.types.PyObjectPtr, 'w')
+        self.u = self.ircfg.add_local(self.types.PyObjectPtr, 'u')
+        self.t = self.ircfg.add_local(self.types.PyObjectPtr, 't')
+        self.retval = self.ircfg.add_local(self.types.PyObjectPtr, 'retval')
+        self.tstate = self.ircfg.add_local(self.types.PyThreadStatePtr, 'tstate')
+        self.co = self.ircfg.add_local(self.types.PyCodeObjectPtr, 'co')
+        self.names = self.ircfg.add_local(self.types.PyObjectPtr, 'names')
+        self.consts = self.ircfg.add_local(self.types.PyObjectPtr, 'consts')
 
         # Some pre-canned expressions:
         self.f_localsplus = FieldDereference(self.f, "f_localsplus")
@@ -150,7 +189,7 @@ class Compiler:
 
         # fastlocals:
         for i in range(len(co.co_varnames)):
-            local = self.ircfg.add_local('PyObject *',
+            local = self.ircfg.add_local(self.types.PyObjectPtr,
                                         'local%i_%s' % (i, co.co_varnames[i]))
             self.locals.append(local)
 
@@ -158,7 +197,7 @@ class Compiler:
 
         # Have explicit locals for each stack location:
         for i in range(co.co_stacksize):
-            self.stack.append(self.ircfg.add_local('PyObject *', 'stack%i' % i))
+            self.stack.append(self.ircfg.add_local(self.types.PyObjectPtr, 'stack%i' % i))
 
         # Add some top-level comments summarizing the bytecode:
         s = sys.stdout
@@ -268,11 +307,11 @@ class Compiler:
         self.fast_consts = []
         def setup_fast_refs(arr, cls, tuplevar, co_var):
             for i in range(len(co_var)):
-                fast = cls(co_var, i)
+                fast = cls(co_var, self.types.PyObjectPtr, i)
                 arr.append(fast)
                 self.ircfg.locals.append(fast)
 
-                expr = expr_for_python_obj(co_var[i])
+                expr = expr_for_python_obj(co_var[i], self.globals_)
                 if expr:
                     # Avoid looking up the const if it's a singleton,
                     # potentially exposing type-information to later
@@ -400,6 +439,8 @@ class OpcodeContext:
     def __init__(self, compiler, opcode, co, bstack, vheight, curcblock, why):
         #assert vheight is not None, (opcode.addr)
         self.compiler = compiler
+        self.types = compiler.types
+        self.globals_ = compiler.globals_
         self.opcode = opcode
         self.co = co
         if bstack:
@@ -565,7 +606,7 @@ class OpcodeContext:
         # }
         self.add_comment('UNWIND_BLOCK()')
         while self.STACK_LEVEL() > b.get_vstack_height():
-            v = self.add_local('PyObject *', 'v')
+            v = self.add_local(self.types.PyObjectPtr, 'v')
             v = self.POP()
             self.Py_XDECREF(v)
 
@@ -592,7 +633,7 @@ class OpcodeContext:
             true_ctxt2.DISPATCH()
             false_ctxt.add_jump(false_ctxt2)
             false_ctxt2.set_why('WHY_EXCEPTION')
-            false_ctxt2.assign(self.compiler.x, Py_None)
+            false_ctxt2.assign(self.compiler.x, ctxt.globals_.Py_None)
             false_ctxt2.assign(self.compiler.err, ConstInt(0))
             ctxt = false_ctxt2
 
@@ -604,7 +645,7 @@ class OpcodeContext:
                                      false_label='PyErr_Occurred_true')
             true_ctxt.add_call(
                 None, 'PyErr_SetString',
-                (Global('PyObject *', 'PyExc_SystemError'),
+                (Global(ctxt.types.PyObjectPtr, 'PyExc_SystemError'),
                  ConstString("error return without exception set")))
             true_ctxt.set_why('WHY_EXCEPTION')
             true_ctxt.add_jump(false_ctxt)
@@ -627,7 +668,7 @@ class OpcodeContext:
 
     def SETLOCAL(self, i, value):
         self.add_comment('SETLOCAL(%i)' % i)
-        tmp = self.add_local('PyObject *', 'tmp', self.LOCAL(i))
+        tmp = self.add_local(self.types.PyObjectPtr, 'tmp', self.LOCAL(i))
         self.assign(self.LOCAL(i), value)
         self.Py_XDECREF(tmp)
 
@@ -686,9 +727,9 @@ class OpcodeContext:
                 # return to avoid generating a bogus jump in the DISPATCH below
                 return
             if self.why == WHY_EXCEPTION and isinstance(tryblock.op, (SETUP_EXCEPT, SETUP_FINALLY)):
-                exc = self.add_local('PyObject *', 'exc')
-                val = self.add_local('PyObject *', 'val')
-                tb = self.add_local('PyObject *', 'tb')
+                exc = self.add_local(self.types.PyObjectPtr, 'exc')
+                val = self.add_local(self.types.PyObjectPtr, 'val')
+                tb = self.add_local(self.types.PyObjectPtr, 'tb')
                 handler = tryblock.b_handler
                 self.add_comment('Beware, this invalidates all b->b_* fields')
                 self.block_setup(ExceptHandler(), -1, self.STACK_LEVEL())
