@@ -50,6 +50,10 @@ class Globals(IrGlobals):
             # FIXME:
             (types.bool, 'INVOKE_tp_iternext', []),
 
+            # Theses are macros in ceval.h
+            (types.bool, 'Py_EnterRecursiveCall', [types.const_char_ptr]),
+            (types.void, 'Py_LeaveRecursiveCall', []),
+
             (types.PyObjectPtr, '_PyDict_NewPresized', [types.Py_ssize_t]),
             (types.int, 'PyDict_SetItem', [types.PyObjectPtr,
                                            types.PyObjectPtr,

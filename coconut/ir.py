@@ -45,6 +45,9 @@ class IrFunction:
     def __eq__(self, other):
         return self.fnname == other.fnname
 
+    def __repr__(self):
+        return '%s(fnname=%r)' % (self.__class__.__name__, self.fnname)
+
 class IrCFG(CFG, IrFunction):
     def __init__(self, returntype, fnname, params):
         CFG.__init__(self)
@@ -141,7 +144,9 @@ class IrCFG(CFG, IrFunction):
 
             # Final op should be a jump, conditional or return:
             if block.ops:
-                assert isinstance(block.ops[-1], (Jump, Conditional, Return))
+                if not isinstance(block.ops[-1], (Jump, Conditional, Return)):
+                    raise ValueError('block %s is not properly terminated; final op: %r'
+                                     % (block, block.ops[-1]))
 
     def calc_edges(self):
         # get list of (src_block, src_op, dest_addr):
@@ -204,14 +209,16 @@ class IrBlock(Block):
         self.ops.append(eval_)
         return eval_
 
-    def add_conditional(self, lhs, expr, rhs,
+    def add_conditional(self, expr,
                         likely=None,
                         true_label='true', false_label='false'):
+        assert isinstance(expr, Expression)
         true_block = self.cfg.add_block(true_label)
         false_block = self.cfg.add_block(false_label)
-        self.ops.append(Conditional(lhs, expr, rhs,
-                                    true_block, false_block,
-                                    likely))
+        cond = Conditional(expr,
+                           true_block, false_block,
+                           likely)
+        self.ops.append(cond)
         self.cfg.add_edge(Edge(self, true_block))
         self.cfg.add_edge(Edge(self, false_block))
         return true_block, false_block
@@ -618,6 +625,22 @@ class BinaryExpr(Expression):
         return 'BinaryExpr(type_=%r, lhs=%r, expr=%r, rhs=%r)' \
             % (self.type_, self.lhs, self.expr, self.rhs)
 
+class Comparison(Expression):
+    def __init__(self, lhs, expr, rhs):
+        assert isinstance(lhs, Expression)
+        assert expr in ('<', '<=', '==', '!=', '>=', '>')
+        assert isinstance(rhs, Expression)
+        self.lhs = lhs
+        self.expr = expr
+        self.rhs = rhs
+
+    def to_c(self):
+        return '%s %s %s' % (self.lhs.to_c(), self.expr, self.rhs.to_c())
+
+    def __repr__(self):
+        return 'Comparison(type_=%r, lhs=%r, expr=%r, rhs=%r)' \
+            % (self.type_, self.lhs, self.expr, self.rhs)
+
 class Call(Expression):
     def __init__(self, fn, args):
         assert isinstance(fn, IrFunction)
@@ -775,23 +798,18 @@ class Assignment(IrOp):
         self.lhs = visitor(self.lhs)
 
 class Conditional(IrOp):
-    def __init__(self, lhs, expr, rhs, true_block, false_block, likely=None):
-        assert isinstance(lhs, Expression)
-        assert expr in ('==', '!=', '<', '<=', '>', '>=', '&')
-        assert isinstance(rhs, Expression)
+    def __init__(self, expr, true_block, false_block, likely=None):
+        assert isinstance(expr, Expression)
         assert isinstance(true_block, IrBlock)
         assert isinstance(false_block, IrBlock)
-        self.lhs = lhs
         self.expr = expr
-        self.rhs = rhs
         self.true_block = true_block
         self.false_block = false_block
         self.likely = likely
 
     def __repr__(self):
         return ('Conditional(%r, %r, %r, %r, %r)'
-                % (self.lhs, self.expr, self.rhs,
-                   self.true_block, self.false_block))
+                % (self.expr, self.true_block, self.false_block))
 
     def write(self, w):
         def write_dest_addr(addr):
@@ -805,10 +823,7 @@ class Conditional(IrOp):
                 w.writeln('goto %s;' % addr)
             w.outdent()
 
-        clause = ('%s %s %s'
-                  % (self.lhs.to_c(),
-                     self.expr,
-                     self.rhs.to_c()))
+        clause = self.expr.to_c(),
         if self.likely is True:
             clause = 'LIKELY(%s)' % clause
         if self.likely is False:

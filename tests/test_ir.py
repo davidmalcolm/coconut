@@ -20,7 +20,7 @@ import unittest
 
 from coconut.backend.libgccjit import GccJitBackend
 from coconut.ir import IrCFG, IrTypes, IrGlobals, \
-    Param, Call, BinaryExpr, ConstInt
+    Param, Call, BinaryExpr, ConstInt, Comparison
 
 def to_gccjit(ircfg, types_, globals_):
     backend = GccJitBackend(types_, globals_)
@@ -47,7 +47,7 @@ class IrTests(unittest.TestCase):
 
         b_entry = cfg.add_block('entry')
         b_on_true, b_on_false = b_entry.add_conditional(
-            x, '>', ConstInt(int_, 3))
+            Comparison(x, '>', ConstInt(int_, 3)))
 
         b_on_true.add_return(BinaryExpr(int_, x, '*', ConstInt(int_, 2)))
 

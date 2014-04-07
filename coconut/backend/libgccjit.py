@@ -19,7 +19,7 @@ import gccjit
 
 from coconut.ir import Comment, Assignment, Local, Call, FieldDereference, \
     IrType, IrPointerType, IrStruct, Conditional, Param, ConstInt, Return, \
-    BinaryExpr, IrConstType, IrFunction
+    BinaryExpr, IrConstType, IrFunction, ConstString, Comparison
 
 class GccJitBackend:
     def __init__(self, types, globals_):
@@ -127,17 +127,8 @@ class GccJitBackend:
                     gblock.add_assignment(self.make_lvalue(op.lhs),
                                           self.make_rvalue(op.rhs))
                 elif isinstance(op, Conditional):
-                    opdict = {'<':gccjit.Comparison.LT,
-                              '<=':gccjit.Comparison.LE,
-                              '==':gccjit.Comparison.EQ,
-                              '!=':gccjit.Comparison.NE,
-                              '>=':gccjit.Comparison.GE,
-                              '>':gccjit.Comparison.GT}
                     gblock.end_with_conditional(
-                        self.ctxt.new_comparison(
-                            opdict[op.expr],
-                            self.make_rvalue(op.lhs),
-                            self.make_rvalue(op.rhs)),
+                        self.make_rvalue(op.expr),
                         blockdict[op.true_block],
                         blockdict[op.false_block])
                 elif isinstance(op, Return):
@@ -155,7 +146,7 @@ class GccJitBackend:
         elif isinstance(expr, FieldDereference):
             rvalue = self.make_rvalue(expr.ptr)
             field = self.get_field(rvalue.get_type(), expr.fieldname)
-            return self.make_rvalue(expr.ptr).dereference_field(expr.fieldname) # FIXME
+            return self.make_rvalue(expr.ptr).dereference_field(field)
         raise NotImplementedError(expr)
 
     def make_rvalue(self, expr):
@@ -177,9 +168,22 @@ class GccJitBackend:
                                            self.typedict[expr.type_],
                                            self.make_rvalue(expr.lhs),
                                            self.make_rvalue(expr.rhs))
+        elif isinstance(expr, Comparison):
+            opdict = {'<':gccjit.Comparison.LT,
+                      '<=':gccjit.Comparison.LE,
+                      '==':gccjit.Comparison.EQ,
+                      '!=':gccjit.Comparison.NE,
+                      '>=':gccjit.Comparison.GE,
+                      '>':gccjit.Comparison.GT}
+            return self.ctxt.new_comparison(
+                opdict[expr.expr],
+                self.make_rvalue(expr.lhs),
+                self.make_rvalue(expr.rhs))
         elif isinstance(expr, ConstInt):
             return self.ctxt.new_rvalue_from_int(self.typedict[expr.type_],
                                                  expr.value)
+        elif isinstance(expr, ConstString):
+            return self.ctxt.new_string_literal(expr.value.encode())
         raise NotImplementedError(expr)
 
     def make_function(self, fnname):

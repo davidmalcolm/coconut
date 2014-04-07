@@ -77,37 +77,50 @@ class CompilationTests(unittest.TestCase):
 
         # We should now have an entry block,
         # plus at least one block per bytecode op
-        self.assertEqual(len(ircfg.blocks), 3)
-        self.assertEqual(len(ircfg.edges), 2)
+        self.assertEqual(len(ircfg.blocks), 5)
+        self.assertEqual(len(ircfg.edges), 4)
 
         #print('ircfg.blocks: %r' % ircfg.blocks)
         #print('ircfg.addr_to_block: %r' % ircfg.addr_to_block)
         b_entry = ircfg.addr_to_block['entry']
+        b_Py_EnterRecursiveCall_failed = ircfg.addr_to_block['Py_EnterRecursiveCall_failed']
+        b_Py_EnterRecursiveCall_succeeded = ircfg.addr_to_block['Py_EnterRecursiveCall_succeeded']
         b_LOAD_CONST = ircfg.addr_to_block['bytecode_offset_0_LOAD_CONST']
         b_RETURN_VALUE = ircfg.addr_to_block['bytecode_offset_3_RETURN_VALUE']
 
         # Verify initial setup
         self.assertEqual(b_entry.addr, 'entry')
         self.assertEqual(len(b_entry.pred_edges), 0)
-        self.assertEqual(len(b_entry.succ_edges), 1)
+        self.assertEqual(len(b_entry.succ_edges), 2)
         ops = b_entry.get_real_ops()
         self.assert_is_c(ops[0], 'tstate = PyThreadState_GET();\n')
-        self.assert_is_c(ops[1], 'tstate->frame = f;\n')
-        self.assert_is_assignment(ops[2],
+        self.assert_is_c(ops[1],
+                         ('if (UNLIKELY(Py_EnterRecursiveCall(""))) {\n'
+                          +'    goto Py_EnterRecursiveCall_failed;\n'
+                          +'} else {\n'
+                          +'    goto Py_EnterRecursiveCall_succeeded;\n'
+                          +'}\n'))
+
+        ops = b_Py_EnterRecursiveCall_failed.get_real_ops()
+        self.assert_is_c(ops[0], 'return NULL;\n')
+
+        ops = b_Py_EnterRecursiveCall_succeeded.get_real_ops()
+        self.assert_is_c(ops[0], 'tstate->frame = f;\n')
+        self.assert_is_assignment(ops[1],
                                   lhsname='retval')
-        self.assert_is_c(ops[2], 'retval = NULL;\n')
+        self.assert_is_c(ops[1], 'retval = NULL;\n')
         # We pre-extract locals for each of the various consts,
         # so that LOAD_CONST can be a simple lookup, and various
         # optimizations become possible.
-        self.assert_is_c(ops[3], 'co = f->f_code;\n')
-        self.assert_is_c(ops[4], 'names = co->co_names;\n')
-        self.assert_is_c(ops[5], 'consts = co->co_consts;\n')
-        self.assert_is_c(ops[6], 'err = 0;\n')
-        self.assert_is_c(ops[7], 'x = Py_None;\n')
-        self.assert_is_c(ops[8], 'w = NULL;\n')
-        self.assert_is_c(ops[9], 'const0_None = Py_None;\n')
-        self.assert_is_jump(ops[10], b_LOAD_CONST)
-        self.assert_is_c(ops[10], 'goto bytecode_offset_0_LOAD_CONST;\n')
+        self.assert_is_c(ops[2], 'co = f->f_code;\n')
+        self.assert_is_c(ops[3], 'names = co->co_names;\n')
+        self.assert_is_c(ops[4], 'consts = co->co_consts;\n')
+        self.assert_is_c(ops[5], 'err = 0;\n')
+        self.assert_is_c(ops[6], 'x = Py_None;\n')
+        self.assert_is_c(ops[7], 'w = NULL;\n')
+        self.assert_is_c(ops[8], 'const0_None = Py_None;\n')
+        self.assert_is_jump(ops[9], b_LOAD_CONST)
+        self.assert_is_c(ops[9], 'goto bytecode_offset_0_LOAD_CONST;\n')
 
         # Verify how a LOAD_CONST of None gets unrolled to IR ops,
         # with stack push/pop unrolled to manipulation of locals
@@ -138,11 +151,12 @@ class CompilationTests(unittest.TestCase):
         self.assertEqual(len(b_RETURN_VALUE.pred_edges), 1)
         self.assertEqual(len(b_RETURN_VALUE.succ_edges), 0)
         ops = b_RETURN_VALUE.get_real_ops()
-        self.assertEqual(len(ops), 3)
+        self.assertEqual(len(ops), 4)
         self.assert_is_c(ops[0], 'f->f_lasti = 3;\n')
         self.assert_is_assignment_between_locals(
             ops[1],
             typename='PyObject *', lhsname='retval', rhsname='stack0')
+        self.assert_is_c(ops[2], '(void)Py_LeaveRecursiveCall();\n')
         self.assertEqual(ops[-1].to_c(),
                          'return retval;\n')
 

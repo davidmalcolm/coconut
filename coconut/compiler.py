@@ -44,7 +44,7 @@ from coconut.ir import IrCFG, IrBlock, Expression, Local, Const, ConstInt, \
     ConstString,  NULL, Call, Local, Global, Assignment, LValue, \
     FieldDereference, ArrayLookup, \
     IrTypes, IrType, IrStruct, IrField, IrFunction, \
-    Param
+    Param, Comparison
 from coconut.dot import dot_to_png, dot_to_svg
 from coconut.optimize import expr_for_python_obj
 
@@ -103,7 +103,7 @@ class Types(IrTypes):
         self.bool = self.new_type('bool')
         self.char = self.new_type('char')
         self.char_ptr = self.char.get_pointer()
-        self.const_char_ptr = self.char.get_const()
+        self.const_char_ptr = self.char.get_const().get_pointer()
         self.int = self.new_type('int')
         self.Py_ssize_t = self.new_type('Py_ssize_t')
 
@@ -234,24 +234,19 @@ class Compiler:
                                 self.globals_.PyThreadState_GET,
                                 ())
 
-        '''
-        self.curcblock.writeln()
-        self.curcblock.add_comment('push frame')
-        recursive_call, otherwise = \
-            self.curcblock.add_conditional(Expression('Py_EnterRecursiveCall("")'),
-                                           '!=',
-                                           ConstInt(0),
-                                           likely=False,
-                                           true_label='Py_EnterRecursiveCall_failed',
-                                           false_label='Py_EnterRecursiveCall_succeeded')
-        recursive_call.add_return(NULL())
-
-        self.curcblock = otherwise
-        '''
-
-        # TODO:
         #  if (Py_EnterRecursiveCall(""))
         #    return NULL;
+        recursive_call, otherwise = \
+            self.curcblock.add_conditional(
+                Call(self.globals_.Py_EnterRecursiveCall,
+                     (ConstString(''),)),
+                likely=False,
+                true_label='Py_EnterRecursiveCall_failed',
+                false_label='Py_EnterRecursiveCall_succeeded')
+
+        recursive_call.add_return(NULL(self.types.PyObjectPtr))
+
+        self.curcblock = otherwise
 
         # tstate->frame = f;
         self.curcblock.add_assignment(
@@ -570,7 +565,8 @@ class OpcodeContext:
             true_label='%s_%s' % (prefix, true_label)
             false_label='%s_%s' % (prefix, false_label)
         true_block, false_block = \
-            self.curcblock.add_conditional(lhs, expr, rhs, likely,
+            self.curcblock.add_conditional(Comparison(lhs, expr, rhs),
+                                           likely,
                                            true_label=true_label,
                                            false_label=false_label)
         # FIXME: need to wire up true_block and false_block
@@ -896,6 +892,6 @@ class OpcodeContext:
 
     def exit_eval_frame(self):
         self.writeln('exit_eval_frame:')
-        #self.add_call(None, 'Py_LeaveRecursiveCall', ())
+        self.add_call(None, self.globals_.Py_LeaveRecursiveCall, ())
         #self.assign(LValue('tstate->frame'), Expression('f->f_back'))
         self.add_return(self.compiler.retval)
