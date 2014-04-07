@@ -92,14 +92,13 @@ class CompilationTests(unittest.TestCase):
         self.assertEqual(b_entry.addr, 'entry')
         self.assertEqual(len(b_entry.pred_edges), 0)
         self.assertEqual(len(b_entry.succ_edges), 2)
-        ops = b_entry.get_real_ops()
-        self.assert_is_c(ops[0], 'tstate = PyThreadState_GET();\n')
-        self.assert_is_c(ops[1],
-                         ('if (UNLIKELY(Py_EnterRecursiveCall(""))) {\n'
-                          +'    goto Py_EnterRecursiveCall_failed;\n'
-                          +'} else {\n'
-                          +'    goto Py_EnterRecursiveCall_succeeded;\n'
-                          +'}\n'))
+        self.assertMultiLineEqual(b_entry.real_ops_to_c(),
+                                  ('tstate = PyThreadState_GET();\n'
+                                   'if (UNLIKELY(Py_EnterRecursiveCall(""))) {\n'
+                                   '    goto Py_EnterRecursiveCall_failed;\n'
+                                   '} else {\n'
+                                   '    goto Py_EnterRecursiveCall_succeeded;\n'
+                                   '}\n'))
 
         ops = b_Py_EnterRecursiveCall_failed.get_real_ops()
         self.assert_is_c(ops[0], 'return NULL;\n')

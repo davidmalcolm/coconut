@@ -181,6 +181,10 @@ class IrBlock(Block):
     def __repr__(self):
         return 'Block(addr=%r)' % self.addr
 
+    def real_ops_to_c(self):
+        return ''.join(op.to_c()
+                       for op in self.get_real_ops())
+
     def writeln(self):
         self.ops.append(Whitespace(''))
 
