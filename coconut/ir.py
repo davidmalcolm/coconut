@@ -25,22 +25,35 @@ from coconut.cwriter import CWriter
 
 WRITE_BLOCKS_INLINE = 1
 
-class IrCFG(CFG):
-    def __init__(self, returntype, fnname):
-        CFG.__init__(self)
+class IrFunction:
+    def __init__(self, returntype, fnname, params):
         self.returntype = returntype
         self.fnname = fnname
+        # Allow param list to simply contain types,
+        # to avoid people having to name them
+        for i, param in enumerate(params):
+            if isinstance(param, IrType):
+                params[i] = Param(param, 'param%i' % i)
+            elif not isinstance(param, Param):
+                raise ValueError('bad parameter for %s: %s'
+                                 % (fnname, param))
+        self.params = params
+
+    def __hash__(self):
+        return hash(self.fnname)
+
+    def __eq__(self, other):
+        return self.fnname == other.fnname
+
+class IrCFG(CFG, IrFunction):
+    def __init__(self, returntype, fnname, params):
+        CFG.__init__(self)
+        IrFunction.__init__(self, returntype, fnname, params)
 
         # keep an ordered list of blocks
         self.blocks = []
-        self.params = []
         self.locals = []
         self.name_to_local = {}
-
-    def add_param(self, type_, name):
-        param = Param(type_, name)
-        self.params.append(param)
-        return param
 
     def add_local(self, type_, name):
         if name in self.name_to_local:
@@ -203,8 +216,9 @@ class IrBlock(Block):
         self.cfg.add_edge(Edge(self, false_block))
         return true_block, false_block
 
-    def add_call(self, lhs, fnname, args):
-        call = Call(fnname, args)
+    def add_call(self, lhs, fn, args):
+        assert isinstance(fn, IrFunction)
+        call = Call(fn, args)
         if lhs:
             self.add_assignment(lhs, call)
         else:
@@ -307,6 +321,7 @@ class IrType:
         self.types = types
         self.name = name
         self._ptr_type = None
+        self._const_type = None
 
     def to_c(self):
         return self.name
@@ -319,6 +334,12 @@ class IrType:
             self._ptr_type = IrPointerType(self.types, self)
             self.types._add(self._ptr_type)
         return self._ptr_type
+
+    def get_const(self):
+        if self._const_type is None:
+            self._const_type = IrConstType(self.types, self)
+            self.types._add(self._const_type)
+        return self._const_type
 
 class IrStruct(IrType):
     def __init__(self, types, name):
@@ -337,10 +358,33 @@ class IrPointerType(IrType):
     def __repr__(self):
         return '%s(other=%r)' % (self.__class__.__name__, self.other)
 
+class IrConstType(IrType):
+    def __init__(self, types, other):
+        IrType.__init__(self, types, 'const %s' % other.name)
+        self.other = other
+        self._const_type = self
+
+    def __repr__(self):
+        return '%s(other=%r)' % (self.__class__.__name__, self.other)
+
 class IrField:
     def __init__(self, type_, name):
         self.type_ = type_
         self.name = name
+
+############################################################################
+# Repository of globals
+############################################################################
+
+class IrGlobals:
+    def __init__(self, types):
+        self.types = types
+        self.functions = []
+
+    def new_function(self, returntype, fnname, params):
+        fn = IrFunction(returntype, fnname, params)
+        self.functions.append(fn)
+        return fn
 
 ############################################################################
 # Expressions
@@ -575,27 +619,21 @@ class BinaryExpr(Expression):
             % (self.type_, self.lhs, self.expr, self.rhs)
 
 class Call(Expression):
-    def __init__(self, fnname, args):
+    def __init__(self, fn, args):
+        assert isinstance(fn, IrFunction)
         assert isinstance(args, tuple)
         for arg in args:
             assert isinstance(arg, Expression)
-        self.fnname = fnname
+        self.fn = fn
         self.args = args
 
     def __repr__(self):
-        return 'Call(%r, %r)' % (self.fnname, self.args)
+        return 'Call(%r, %r)' % (self.fn, self.args)
 
     def to_c(self):
-        if isinstance(self.fnname, InfixBinaryOp):
-            assert len(self.args) == 2
-            return '%s %s %s' \
-                % (self.args[0].to_c(),
-                   self.fnname.symbol,
-                   self.args[1].to_c())
-        else:
-            return '%s(%s)' \
-                % (self.fnname, ', '.join(arg.to_c()
-                                          for arg in self.args))
+        return '%s(%s)' \
+            % (self.fn.fnname, ', '.join(arg.to_c()
+                                         for arg in self.args))
 
 class DerefCall(Expression):
     def __init__(self, local, args):
@@ -788,17 +826,6 @@ class Conditional(IrOp):
     def visit_write_exprs(self, visitor):
         pass
 
-    def change_dest_addr(self, old_dest_addr, new_dest_addr):
-        # FIXME: should we replace both if they both point there?
-        if self.true_addr == old_dest_addr:
-            self.true_addr = new_dest_addr
-        if self.false_addr == old_dest_addr:
-            self.false_addr = new_dest_addr
-
-class InfixBinaryOp:
-    def __init__(self, symbol):
-        self.symbol = symbol
-
 class Eval(IrOp):
     def __init__(self, expr):
         self.expr = expr
@@ -830,9 +857,6 @@ class Jump(IrOp):
 
     def visit_write_exprs(self, visitor):
         pass
-
-    def change_dest_addr(self, old_dest_addr, new_dest_addr):
-        self.dest_addr = new_dest_addr
 
 class Return(IrOp):
     def __init__(self, expr):

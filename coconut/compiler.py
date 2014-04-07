@@ -43,7 +43,8 @@ from coconut.bytecode import BytecodeCFG, BStackEntry, \
 from coconut.ir import IrCFG, IrBlock, Expression, Local, Const, ConstInt, \
     ConstString,  NULL, Call, Local, Global, Assignment, LValue, \
     FieldDereference, ArrayLookup, \
-    IrTypes, IrType, IrStruct, IrField
+    IrTypes, IrType, IrStruct, IrField, IrFunction, \
+    Param
 from coconut.dot import dot_to_png, dot_to_svg
 from coconut.optimize import expr_for_python_obj
 
@@ -98,6 +99,11 @@ class Types(IrTypes):
     def __init__(self):
         IrTypes.__init__(self)
 
+        self.void = self.new_type('void')
+        self.bool = self.new_type('bool')
+        self.char = self.new_type('char')
+        self.char_ptr = self.char.get_pointer()
+        self.const_char_ptr = self.char.get_const()
         self.int = self.new_type('int')
         self.Py_ssize_t = self.new_type('Py_ssize_t')
 
@@ -144,11 +150,13 @@ class Compiler:
 
         self.types = Types()
         self.globals_ = Globals(self.types)
-        self.ircfg = IrCFG(self.types.PyObjectPtr, 'my_eval')
+        self.f = Param(self.types.PyFrameObjectPtr, 'f')
+        self.throwflag = Param(self.types.int, 'throwflag')
+        self.ircfg = IrCFG(returntype=self.types.PyObjectPtr,
+                           fnname='my_eval',
+                           params=[self.f, self.throwflag])
         self.locals = []
         self.stack = []
-        self.f = self.ircfg.add_param(self.types.PyFrameObjectPtr, 'f')
-        self.throwflag = self.ircfg.add_param(self.types.int, 'throwflag')
         # Error status -- nonzero if error:
         self.err = self.ircfg.add_local(self.types.int, 'err')
         # Result object -- NULL if error:
@@ -222,7 +230,9 @@ class Compiler:
 
         # In ceval.c, this is initialized at the point of declaration
         # We need to do it ASAP; it gets used almost immediately:
-        self.curcblock.add_call(self.tstate, 'PyThreadState_GET', ())
+        self.curcblock.add_call(self.tstate,
+                                self.globals_.PyThreadState_GET,
+                                ())
 
         '''
         self.curcblock.writeln()
@@ -320,7 +330,7 @@ class Compiler:
                     self.curcblock.add_assignment(arr[i], expr)
                 else:
                     self.curcblock.add_call(arr[i],
-                                            'PyTuple_GET_ITEM',
+                                            self.globals_.PyTuple_GET_ITEM,
                                             (tuplevar,
                                              ConstInt(self.types.int, i)))
                 # FIXME: INCREF/DECREF pairs
@@ -470,13 +480,13 @@ class OpcodeContext:
         self.curcblock.add_assignment(lhs, rhs)
 
     def Py_INCREF(self, arg):
-        self.curcblock.add_call(None, 'Py_INCREF', (arg,))
+        self.curcblock.add_call(None, self.globals_.Py_INCREF, (arg,))
 
     def Py_DECREF(self, arg):
-        self.curcblock.add_call(None, 'Py_DECREF', (arg,))
+        self.curcblock.add_call(None, self.globals_.Py_DECREF, (arg,))
 
     def Py_XDECREF(self, arg):
-        self.curcblock.add_call(None, 'Py_XDECREF', (arg,))
+        self.curcblock.add_call(None, self.globals_.Py_XDECREF, (arg,))
 
     def add_stack_comment(self, op, oldvheight, newvheight):
         if 1:
@@ -571,8 +581,9 @@ class OpcodeContext:
                               self.bstack, self.vheight,
                               false_block, self.why))
 
-    def add_call(self, lhs, fnname, args):
-        self.curcblock.add_call(lhs, fnname, args)
+    def add_call(self, lhs, fn, args):
+        assert isinstance(fn, IrFunction)
+        self.curcblock.add_call(lhs, fn, args)
 
     def add_GETITEM(self, lhs, tuplename, idx):
         # From ceval.c's:
@@ -651,11 +662,13 @@ class OpcodeContext:
         if ctxt.why == WHY_EXCEPTION or ctxt.why == WHY_RERAISE:
             ctxt.add_comment('Double-check exception status')
             true_ctxt, false_ctxt = \
-                ctxt.add_conditional(Call('PyErr_Occurred', ()), '==', ConstInt(ctxt.types.int, 0),
+                ctxt.add_conditional(Call(ctxt.globals_.PyErr_Occurred, ()),
+                                     '==',
+                                     ConstInt(ctxt.types.int, 0),
                                      true_label='PyErr_Occurred_false',
                                      false_label='PyErr_Occurred_true')
             true_ctxt.add_call(
-                None, 'PyErr_SetString',
+                None, ctxt.globals_.PyErr_SetString,
                 (Global(ctxt.types.PyObjectPtr, 'PyExc_SystemError'),
                  ConstString("error return without exception set")))
             true_ctxt.set_why('WHY_EXCEPTION')
@@ -664,7 +677,7 @@ class OpcodeContext:
 
         if ctxt.why == WHY_EXCEPTION:
             ctxt.add_comment('Log traceback info if this is a real exception')
-            ctxt.add_call(None, 'PyTraceBack_Here', (self.compiler.f, ))
+            ctxt.add_call(None, self.globals_.PyTraceBack_Here, (self.compiler.f, ))
             ctxt.writeln('if (tstate->c_tracefunc != NULL)')
             ctxt.writeln('    call_exc_trace(tstate->c_tracefunc,')
             ctxt.writeln('                   tstate->c_traceobj, f);')

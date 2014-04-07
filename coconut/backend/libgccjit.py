@@ -18,7 +18,8 @@
 import gccjit
 
 from coconut.ir import Comment, Assignment, Local, Call, FieldDereference, \
-    IrType, IrPointerType, IrStruct, Conditional, Param, ConstInt, Return, BinaryExpr
+    IrType, IrPointerType, IrStruct, Conditional, Param, ConstInt, Return, \
+    BinaryExpr, IrConstType, IrFunction
 
 class GccJitBackend:
     def __init__(self, types, globals_):
@@ -32,7 +33,9 @@ class GccJitBackend:
                 gccjit.BoolOption.KEEP_INTERMEDIATES, True)
 
         self.types = types
-        self.globals_ = globals
+        self.globals_ = globals_
+
+        self.functions = {}
 
         # Create types
         self.typedict = {}
@@ -49,18 +52,43 @@ class GccJitBackend:
                           for field in irtype.fields]
                 self.typedict[irtype].set_fields(fields)
 
+        # Now create global functions:
+        self.fndict = {}
+        for fn in self.globals_.functions:
+            if isinstance(fn, IrFunction):
+                params = []
+                for param in fn.params:
+                    assert isinstance(param, Param)
+                    params.append(self.ctxt.new_param(self.typedict[param.type_],
+                                                      param.name.encode()))
+                self.fndict[fn] = self.ctxt.new_function(
+                    gccjit.FunctionKind.IMPORTED,
+                    self.typedict[fn.returntype],
+                    fn.fnname.encode(),
+                    params)
+
     def _make_type(self, irtype):
         if 0:
             print('_make_type: %r' % irtype)
         if isinstance(irtype, IrPointerType):
             return self.typedict[irtype.other].get_pointer()
+        elif isinstance(irtype, IrConstType):
+            return self.typedict[irtype.other].get_const()
         elif isinstance(irtype, IrStruct):
             return self.ctxt.new_struct(irtype.name.encode('utf-8'))
         elif isinstance(irtype, IrType):
+            if irtype.name == 'void':
+                return self.ctxt.get_type(gccjit.TypeKind.VOID)
+            if irtype.name == 'bool':
+                return self.ctxt.get_type(gccjit.TypeKind.BOOL)
+            if irtype.name == 'char':
+                return self.ctxt.get_type(gccjit.TypeKind.CHAR)
             if irtype.name == 'int':
                 return self.ctxt.get_type(gccjit.TypeKind.INT)
             if irtype.name == 'Py_ssize_t':
                 return self.ctxt.get_type(gccjit.TypeKind.INT) # FIXME
+            if irtype.name == 'double':
+                return self.ctxt.get_type(gccjit.TypeKind.DOUBLE)
 
         raise NotImplementedError(irtype)
 
@@ -136,7 +164,7 @@ class GccJitBackend:
         elif isinstance(expr, Param):
             return self.params[expr]
         elif isinstance(expr, Call):
-            func = self.make_function(expr.fnname)
+            func = self.fndict[expr.fn]
             args = [self.make_rvalue(arg)
                     for arg in expr.args]
             return self.ctxt.new_call(func, args)

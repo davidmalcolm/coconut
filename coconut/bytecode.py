@@ -24,17 +24,162 @@ from coconut.cfg import CFG, Block, Edge, Op
 from coconut.dot import to_html, _dot_column
 from coconut.ir import \
     NULL, Expression, ConstInt, ConstString, Global, \
-    Call, FieldDereference, UnaryExpr, EnumValue, Cast, AddressOf
+    Call, FieldDereference, UnaryExpr, EnumValue, Cast, AddressOf, \
+    IrFunction, Param, IrGlobals
 
 # Globals
-class Globals:
+class Globals(IrGlobals):
     def __init__(self, types):
+        IrGlobals.__init__(self, types)
+
         self.Py_False = Cast(AddressOf(Global(types.PyLongObject, '_Py_FalseStruct')),
                              types.PyObjectPtr)
         self.Py_True = Cast(AddressOf(Global(types.PyLongObject, '_Py_TrueStruct')),
                              types.PyObjectPtr)
         self.Py_None = Global(types.PyObjectPtr, 'Py_None')
         self.PyExc_ValueError = Global(types.PyObjectPtr, 'PyExc_ValueError')
+
+        GLOBAL_FUNCTIONS = ([
+            # Alphabetized by fnname.  Not all of these are real API functions;
+            # we may want to build always-inlined helper functions for these
+            (types.void, 'format_exc_check_arg', [types.PyObjectPtr,
+                                                  types.char_ptr,
+                                                  types.PyObjectPtr]),
+            # FIXME:
+            (types.bool, 'impl_LOAD_GLOBAL', []),
+            # FIXME:
+            (types.bool, 'INVOKE_tp_iternext', []),
+
+            (types.PyObjectPtr, '_PyDict_NewPresized', [types.Py_ssize_t]),
+            (types.int, 'PyDict_SetItem', [types.PyObjectPtr,
+                                           types.PyObjectPtr,
+                                           types.PyObjectPtr]),
+
+            (types.void, 'PyErr_Clear', []),
+            (types.PyObjectPtr, 'PyErr_Occurred', []),
+            (types.PyObjectPtr, 'PyErr_SetString', [types.PyObjectPtr,
+                                                    types.const_char_ptr]),
+            (types.int, 'PyErr_ExceptionMatches', [types.PyObjectPtr]),
+
+            (types.PyObjectPtr, 'PyIter_Next', [types.PyObjectPtr]),
+
+            (types.PyObjectPtr, 'PyObject_RichCompare', [types.PyObjectPtr,
+                                                         types.PyObjectPtr,
+                                                         types.int]),
+
+            (types.bool, 'PyList_CheckExact', [types.PyObjectPtr]),
+            (types.PyObjectPtr, 'PyList_GET_ITEM', [types.PyObjectPtr,
+                                                    types.Py_ssize_t]),
+            (types.Py_ssize_t, 'PyList_GET_SIZE', [types.PyObjectPtr]),
+            (types.PyObjectPtr, 'PyList_New', [types.Py_ssize_t]),
+            (types.void, 'PyList_SET_ITEM', [types.PyObjectPtr,
+                                             types.Py_ssize_t,
+                                             types.PyObjectPtr]),
+
+            (types.PyObjectPtr, 'PyObject_GetAttr', [types.PyObjectPtr,
+                                                     types.PyObjectPtr]),
+            (types.PyObjectPtr, 'PyObject_GetItem', [types.PyObjectPtr,
+                                                     types.PyObjectPtr]),
+            (types.PyObjectPtr, 'PyObject_GetIter', [types.PyObjectPtr]),
+            (types.PyObjectPtr, 'PyObject_SetAttr', [types.PyObjectPtr,
+                                                     types.PyObjectPtr,
+                                                     types.PyObjectPtr]),
+            (types.PyObjectPtr, 'PyObject_SetItem', [types.PyObjectPtr,
+                                                     types.PyObjectPtr,
+                                                     types.PyObjectPtr]),
+
+            (types.PyObjectPtr, 'PySequence_Contains', [types.PyObjectPtr,
+                                                        types.PyObjectPtr]),
+
+            (types.PyObjectPtr, 'PySlice_New', [types.PyObjectPtr,
+                                                types.PyObjectPtr,
+                                                types.PyObjectPtr]),
+
+            (types.PyThreadStatePtr, 'PyThreadState_GET', []),
+
+            (types.int, 'PyTraceBack_Here', [types.PyFrameObjectPtr]),
+
+            (types.bool, 'PyTuple_CheckExact', [types.PyObjectPtr]),
+            (types.PyObjectPtr, 'PyTuple_GetItem', [types.PyObjectPtr,
+                                                    types.Py_ssize_t]),
+            (types.PyObjectPtr, 'PyTuple_GET_ITEM', [types.PyObjectPtr,
+                                                     types.Py_ssize_t]),
+            (types.Py_ssize_t, 'PyTuple_GET_SIZE', [types.PyObjectPtr]),
+            (types.PyObjectPtr, 'PyTuple_New', [types.Py_ssize_t]),
+            (types.int, 'PyTuple_SET_ITEM', [types.PyObjectPtr,
+                                             types.Py_ssize_t,
+                                             types.PyObjectPtr]),
+
+            (types.void, 'Py_INCREF', [Param(types.PyObjectPtr, 'x')]),
+            (types.void, 'Py_DECREF', [Param(types.PyObjectPtr, 'x')]),
+            (types.void, 'Py_XDECREF', [Param(types.PyObjectPtr, 'x')]),
+        ]
+
+        # Unary ops:
+        + [(types.PyObjectPtr, fnname, [types.PyObjectPtr])
+           for fnname in ['PyNumber_Positive',
+                          'PyNumber_Negative',
+                          'PyNumber_Invert']]
+
+        # Binary ops:
+        + [(types.PyObjectPtr, fnname, [types.PyObjectPtr, types.PyObjectPtr])
+           for fnname in ['PyNumber_Add',
+                          'PyNumber_Subtract',
+                          'PyNumber_Multiply',
+                          'PyNumber_TrueDivide',
+                          'PyNumber_FloorDivide',
+                          'PyNumber_Remainder',
+                          'PyNumber_Power',
+                          'PyNumber_Lshift',
+                          'PyNumber_Rshift',
+                          'PyNumber_And',
+                          'PyNumber_Xor',
+                          'PyNumber_Or',
+                          'PyNumber_InPlacePower',
+                          'PyNumber_InPlaceMultiply',
+                          'PyNumber_InPlaceTrueDivide',
+                          'PyNumber_InPlaceFloorDivide',
+                          'PyNumber_InPlaceRemainder',
+                          'PyNumber_InPlaceAdd',
+                          'PyNumber_InPlaceSubtract',
+                          'PyNumber_InPlaceLshift',
+                          'PyNumber_InPlaceRshift',
+                          'PyNumber_InPlaceAnd',
+                          'PyNumber_InPlaceXor',
+                          'PyNumber_InPlaceOr',]]
+        ) # end of GLOBAL_FUNCTIONS
+
+        for returntype, fnname, params in GLOBAL_FUNCTIONS:
+            setattr(self,
+                    fnname,
+                    self.new_function(returntype, fnname, params))
+
+    def get_impl_CALL_FUNCTION(self, na, nk):
+        # Cache of helpers for calling callables with
+        # various numbers of positional and keyword args:
+        fnname = 'impl_CALL_FUNCTION_na%i_nk%i' % (na, nk)
+        if hasattr(self, fnname):
+            return self.fnname
+
+        # Cache miss; build a new helper function:
+        params = [Param(self.types.PyObjectPtr,
+                        "callable")]
+        # Positional args:
+        for i in range(na):
+            params += [Param(self.types.PyObjectPtr,
+                             "posarg%i" % i)]
+        # Keyword args:
+        for i in range(nk):
+            params += [Param(self.types.PyObjectPtr,
+                             "kwarg_key_%i" % i),
+                       Param(self.types.PyObjectPtr,
+                             "kwarg_val_%i" % i)]
+
+        fn = self.new_function(self.types.PyObjectPtr,
+                               fnname,
+                            params)
+        self.fnname = fn
+        return fn
 
 # Constants
 # From object.h: Rich comparison opcodes:
@@ -782,7 +927,7 @@ class BytecodeOp(Op):
 ############################################################################
 # Helper functions for implementing opcodes
 ############################################################################
-def impl_simple_unary_op(ctxt, fnname):
+def impl_simple_unary_op(ctxt, fn):
     # This pattern is shared by most of the UNARY_ ops
     # (though not UNARY_NOT)
     #TARGET(UNARY_POSITIVE)
@@ -796,14 +941,14 @@ def impl_simple_unary_op(ctxt, fnname):
     x = ctxt.compiler.x
     # Gen code:
     ctxt.assign(v, ctxt.TOP())
-    ctxt.add_call(x, fnname, (v,))
+    ctxt.add_call(x, fn, (v,))
     ctxt.Py_DECREF(v)
     ctxt.SET_TOP(x)
     true_ctxt, false_ctxt = ctxt.add_conditional(x, '!=', ctxt.NULL(), likely=True)
     true_ctxt.DISPATCH()
     false_ctxt.break_to_on_error()
 
-def impl_simple_binary_op(ctxt, fnname, *extraargs):
+def impl_simple_binary_op(ctxt, fn, *extraargs):
     # This pattern is shared by most of the BINARY_ ops
     # (though not BINARY_ADD).  BINARY_POWER has an extraarg
     #TARGET(BINARY_foo)
@@ -821,7 +966,7 @@ def impl_simple_binary_op(ctxt, fnname, *extraargs):
     # Gen code:
     ctxt.POP(w)
     ctxt.assign(v, ctxt.TOP())
-    ctxt.add_call(x, fnname, tuple([v, w] + list(extraargs)))
+    ctxt.add_call(x, fn, tuple([v, w] + list(extraargs)))
     ctxt.Py_DECREF(v)
     ctxt.Py_DECREF(w)
     ctxt.SET_TOP(x)
@@ -830,7 +975,7 @@ def impl_simple_binary_op(ctxt, fnname, *extraargs):
     false_ctxt.break_to_on_error()
 
 
-def impl_simple_INPLACE_op(ctxt, fnname, *extraargs):
+def impl_simple_INPLACE_op(ctxt, fn, *extraargs):
     # This pattern is shared by most of the INPLACE_ ops
     # (though not INPLACE_ADD); INPLACE_POWER has an extra arg
     #    TARGET(INPLACE_foo)
@@ -848,7 +993,7 @@ def impl_simple_INPLACE_op(ctxt, fnname, *extraargs):
     # Gen code:
     ctxt.POP(w)
     ctxt.assign(v, ctxt.TOP())
-    ctxt.add_call(x, fnname, tuple([v, w] + list(extraargs)))
+    ctxt.add_call(x, fn, tuple([v, w] + list(extraargs)))
     ctxt.Py_DECREF(v)
     ctxt.Py_DECREF(w)
     ctxt.SET_TOP(x)
@@ -888,10 +1033,10 @@ class LOAD_FAST(BytecodeOp):
         true_ctxt.PUSH(x)
         true_ctxt.FAST_DISPATCH()
         false_ctxt.add_call(None,
-                            'format_exc_check_arg',
+                            ctxt.globals_.format_exc_check_arg,
                             (Global(ctxt.types.PyObjectPtr, 'PyExc_UnboundLocalError'),
                              ConstString(UNBOUNDLOCAL_ERROR_MSG),
-                             Call('PyTuple_GetItem',
+                             Call(ctxt.globals_.PyTuple_GetItem,
                                   (FieldDereference(co, 'co_varnames'),
                                    ConstInt(ctxt.types.int, self.arg)))))
         false_ctxt.break_to_on_error()
@@ -990,68 +1135,68 @@ class DUP_TOP_TWO(BytecodeOp):
 
 class UNARY_POSITIVE(BytecodeOp):
     def ceval(self, ctxt):
-        impl_simple_unary_op(ctxt, 'PyNumber_Positive')
+        impl_simple_unary_op(ctxt, ctxt.globals_.PyNumber_Positive)
 
 class UNARY_NEGATIVE(BytecodeOp):
     def ceval(self, ctxt):
-        impl_simple_unary_op(ctxt, 'PyNumber_Negative')
+        impl_simple_unary_op(ctxt, ctxt.globals_.PyNumber_Negative)
 
 class UNARY_NOT(BytecodeOp):
     pass
 
 class UNARY_INVERT(BytecodeOp):
     def ceval(self, ctxt):
-        impl_simple_unary_op(ctxt, 'PyNumber_Invert')
+        impl_simple_unary_op(ctxt, ctxt.globals_.PyNumber_Invert)
 
 class BINARY_POWER(BytecodeOp):
     def ceval(self, ctxt):
-        impl_simple_binary_op(ctxt, 'PyNumber_Power',
+        impl_simple_binary_op(ctxt, ctxt.globals_.PyNumber_Power,
                               ctxt.globals_.Py_None)
 
 class BINARY_MULTIPLY(BytecodeOp):
     def ceval(self, ctxt):
-        impl_simple_binary_op(ctxt, 'PyNumber_Multiply')
+        impl_simple_binary_op(ctxt, ctxt.globals_.PyNumber_Multiply)
 
 class BINARY_TRUE_DIVIDE(BytecodeOp):
     def ceval(self, ctxt):
-        impl_simple_binary_op(ctxt, 'PyNumber_TrueDivide')
+        impl_simple_binary_op(ctxt, ctxt.globals_.PyNumber_TrueDivide)
 
 class BINARY_FLOOR_DIVIDE(BytecodeOp):
     def ceval(self, ctxt):
-        impl_simple_binary_op(ctxt, 'PyNumber_FloorDivide')
+        impl_simple_binary_op(ctxt, ctxt.globals_.PyNumber_FloorDivide)
 
 class BINARY_MODULO(BytecodeOp):
     def ceval(self, ctxt):
-        impl_simple_binary_op(ctxt, 'PyNumber_Remainder')
+        impl_simple_binary_op(ctxt, ctxt.globals_.PyNumber_Remainder)
 
 class BINARY_ADD(BytecodeOp):
     def ceval(self, ctxt):
         # For now, don't implement the PyUnicode optimization
         # from ceval.c   Hopefully our other optimizations will
         # allow a PyUnicode_Append
-        impl_simple_binary_op(ctxt, 'PyNumber_Add')
+        impl_simple_binary_op(ctxt, ctxt.globals_.PyNumber_Add)
 
 class BINARY_SUBTRACT(BytecodeOp):
     def ceval(self, ctxt):
-        impl_simple_binary_op(ctxt, 'PyNumber_Subtract')
+        impl_simple_binary_op(ctxt, ctxt.globals_.PyNumber_Subtract)
 class BINARY_SUBSCR(BytecodeOp):
     def ceval(self, ctxt):
-        impl_simple_binary_op(ctxt, 'PyObject_GetItem')
+        impl_simple_binary_op(ctxt, ctxt.globals_.PyObject_GetItem)
 class BINARY_LSHIFT(BytecodeOp):
     def ceval(self, ctxt):
-        impl_simple_binary_op(ctxt, 'PyNumber_Lshift')
+        impl_simple_binary_op(ctxt, ctxt.globals_.PyNumber_Lshift)
 class BINARY_RSHIFT(BytecodeOp):
     def ceval(self, ctxt):
-        impl_simple_binary_op(ctxt, 'PyNumber_Rshift')
+        impl_simple_binary_op(ctxt, ctxt.globals_.PyNumber_Rshift)
 class BINARY_AND(BytecodeOp):
     def ceval(self, ctxt):
-        impl_simple_binary_op(ctxt, 'PyNumber_And')
+        impl_simple_binary_op(ctxt, ctxt.globals_.PyNumber_And)
 class BINARY_XOR(BytecodeOp):
     def ceval(self, ctxt):
-        impl_simple_binary_op(ctxt, 'PyNumber_Xor')
+        impl_simple_binary_op(ctxt, ctxt.globals_.PyNumber_Xor)
 class BINARY_OR(BytecodeOp):
     def ceval(self, ctxt):
-        impl_simple_binary_op(ctxt, 'PyNumber_Or')
+        impl_simple_binary_op(ctxt, ctxt.globals_.PyNumber_Or)
 
 class LIST_APPEND(BytecodeOp):
     pass
@@ -1061,43 +1206,55 @@ class SET_ADD(BytecodeOp):
 
 class INPLACE_POWER(BytecodeOp):
     def ceval(self, ctxt):
-        impl_simple_INPLACE_op(ctxt, 'PyNumber_InPlacePower',
+        impl_simple_INPLACE_op(ctxt,
+                               ctxt.globals_.PyNumber_InPlacePower,
                                ctxt.globals_.Py_None)
 class INPLACE_MULTIPLY(BytecodeOp):
     def ceval(self, ctxt):
-        impl_simple_INPLACE_op(ctxt, 'PyNumber_InPlaceMultiply')
+        impl_simple_INPLACE_op(ctxt,
+                               ctxt.globals_.PyNumber_InPlaceMultiply)
 class INPLACE_TRUE_DIVIDE(BytecodeOp):
     def ceval(self, ctxt):
-        impl_simple_INPLACE_op(ctxt, 'PyNumber_InPlaceTrueDivide')
+        impl_simple_INPLACE_op(ctxt,
+                               ctxt.globals_.PyNumber_InPlaceTrueDivide)
 class INPLACE_FLOOR_DIVIDE(BytecodeOp):
     def ceval(self, ctxt):
-        impl_simple_INPLACE_op(ctxt, 'PyNumber_InPlaceFloorDivide')
+        impl_simple_INPLACE_op(ctxt,
+                               ctxt.globals_.PyNumber_InPlaceFloorDivide)
 class INPLACE_MODULO(BytecodeOp):
     def ceval(self, ctxt):
-        impl_simple_INPLACE_op(ctxt, 'PyNumber_InPlaceRemainder')
+        impl_simple_INPLACE_op(ctxt,
+                               ctxt.globals_.PyNumber_InPlaceRemainder)
 class INPLACE_ADD(BytecodeOp):
     def ceval(self, ctxt):
         # FIXME: for now we don't have the PyUnicode optimization that
         # ceval.c has
-        impl_simple_INPLACE_op(ctxt, 'PyNumber_InPlaceAdd')
+        impl_simple_INPLACE_op(ctxt,
+                               ctxt.globals_.PyNumber_InPlaceAdd)
 class INPLACE_SUBTRACT(BytecodeOp):
     def ceval(self, ctxt):
-        impl_simple_INPLACE_op(ctxt, 'PyNumber_InPlaceSubtract')
+        impl_simple_INPLACE_op(ctxt,
+                               ctxt.globals_.PyNumber_InPlaceSubtract)
 class INPLACE_LSHIFT(BytecodeOp):
     def ceval(self, ctxt):
-        impl_simple_binary_op(ctxt, 'PyNumber_InPlaceLshift')
+        impl_simple_binary_op(ctxt,
+                              ctxt.globals_.PyNumber_InPlaceLshift)
 class INPLACE_RSHIFT(BytecodeOp):
     def ceval(self, ctxt):
-        impl_simple_binary_op(ctxt, 'PyNumber_InPlaceRshift')
+        impl_simple_binary_op(ctxt,
+                              ctxt.globals_.PyNumber_InPlaceRshift)
 class INPLACE_AND(BytecodeOp):
     def ceval(self, ctxt):
-        impl_simple_binary_op(ctxt, 'PyNumber_InPlaceAnd')
+        impl_simple_binary_op(ctxt,
+                              ctxt.globals_.PyNumber_InPlaceAnd)
 class INPLACE_XOR(BytecodeOp):
     def ceval(self, ctxt):
-        impl_simple_binary_op(ctxt, 'PyNumber_InPlaceXor')
+        impl_simple_binary_op(ctxt,
+                              ctxt.globals_.PyNumber_InPlaceXor)
 class INPLACE_OR(BytecodeOp):
     def ceval(self, ctxt):
-        impl_simple_binary_op(ctxt, 'PyNumber_InPlaceOr')
+        impl_simple_binary_op(ctxt,
+                              ctxt.globals_.PyNumber_InPlaceOr)
 
 class STORE_SUBSCR(BytecodeOp):
     def ceval(self, ctxt):
@@ -1122,7 +1279,7 @@ class STORE_SUBSCR(BytecodeOp):
         ctxt.assign(u, ctxt.THIRD())
         ctxt.STACKADJ(-3);
         ctxt.add_comment('v[w] = u')
-        ctxt.add_call(err, 'PyObject_SetItem', (v, w, u))
+        ctxt.add_call(err, ctxt.globals_.PyObject_SetItem, (v, w, u))
         ctxt.Py_DECREF(u)
         ctxt.Py_DECREF(v)
         ctxt.Py_DECREF(w)
@@ -1267,7 +1424,7 @@ def unpack_iterable(ctxt, v, argcnt, argcntafter, offset):
     return_0.add_comment('effectively a "return 0;" from inlined unpack_iterable()')
     return_0.STACKADJ(-offset) # back at the old level
 
-    ctxt.add_call(it, 'PyObject_GetIter', (v,))
+    ctxt.add_call(it, ctxt.globals_.PyObject_GetIter, (v,))
     error_ctxt, non_null_ctxt = \
         ctxt.add_conditional(it, '==', ctxt.NULL(), likely=False,
                              true_label='PyObject_GetIter_failed',
@@ -1278,7 +1435,7 @@ def unpack_iterable(ctxt, v, argcnt, argcntafter, offset):
     ctxt = non_null_ctxt
     # Unroll the loop over argcnt within non_null_ctxt:
     for i in range(argcnt):
-        ctxt.add_call(w, 'PyIter_Next', (it, ))
+        ctxt.add_call(w, ctxt.globals_.PyIter_Next, (it, ))
         is_null_ctxt, ctxt = \
             ctxt.add_conditional(w, '==', ctxt.NULL(),
                                  true_label='call_%i_to_PyIter_Next_returned_NULL' % i,
@@ -1288,7 +1445,8 @@ def unpack_iterable(ctxt, v, argcnt, argcntafter, offset):
         # is_null_ctxt:
         is_null_ctxt.add_comment('Iterator done, via error or exhaustion.')
         no_err_occurred, err_occurred = \
-            is_null_ctxt.add_conditional(UnaryExpr('!', Call('PyErr_Occurred', ())),
+            is_null_ctxt.add_conditional(UnaryExpr('!',
+                                                   Call(ctxt.globals_.PyErr_Occurred, ())),
                                          '!=',
                                          ConstInt(ctxt.types.int, 0),
                                          true_label='PyErr_Occurred_is_false',
@@ -1296,7 +1454,8 @@ def unpack_iterable(ctxt, v, argcnt, argcntafter, offset):
 
         # no_err_occurred:
         #   We can precompute the formatted error:
-        no_err_occurred.add_call(None, 'PyErr_SetString',  # rather than PyErr_Format
+        no_err_occurred.add_call(None,
+                                 ctxt.globals_.PyErr_SetString,  # rather than PyErr_Format
                                  (ctxt.globals_.PyExc_ValueError,
                                   ConstString("need more than %d value%s to unpack"
                                               % (i, "" if i == 1 else "s"))))
@@ -1313,13 +1472,14 @@ def unpack_iterable(ctxt, v, argcnt, argcntafter, offset):
     # non_null_ctxt: (continued)
     assert argcntafter == -1 # FIXME: only supporting UNPACK_SEQUENCE for now
     ctxt.add_comment('We better have exhausted the iterator now.')
-    ctxt.add_call(w, 'PyIter_Next', (it, ))
+    ctxt.add_call(w, ctxt.globals_.PyIter_Next, (it, ))
     is_null_ctxt2, non_null_ctxt2 = ctxt.add_conditional(w, '==', ctxt.NULL())
 
     # is_null_ctxt2:
     err_occurred2, no_err_occurred2 = \
-        is_null_ctxt2.add_conditional(Call('PyErr_Occurred', ()),
-                                      '!=', ConstInt(ctxt.types.int, 0))
+        is_null_ctxt2.add_conditional(
+            Call(ctxt.globals_.PyErr_Occurred, ()),
+            '!=', ConstInt(ctxt.types.int, 0))
 
     impl_goto_error(err_occurred2, i)
 
@@ -1328,11 +1488,13 @@ def unpack_iterable(ctxt, v, argcnt, argcntafter, offset):
 
     # non_null_ctxt2:
     non_null_ctxt2.Py_DECREF(w)
-    non_null_ctxt2.add_call(None, 'PyErr_SetString',  # rather than PyErr_Format
-                              (ctxt.globals_.PyExc_ValueError,
-                               # precomputed format error:
-                               ConstString("too many values to unpack "
-                                           "(expected %d)" % argcnt)))
+    non_null_ctxt2.add_call(
+        None,
+        ctxt.globals_.PyErr_SetString,  # rather than PyErr_Format
+        (ctxt.globals_.PyExc_ValueError,
+         # precomputed format error:
+         ConstString("too many values to unpack "
+                     "(expected %d)" % argcnt)))
     impl_goto_error(non_null_ctxt2, i)
 
     # FIXME: only supporting UNPACK_SEQUENCE for now
@@ -1377,7 +1539,7 @@ class UNPACK_SEQUENCE(BytecodeOp):
         ctxt.POP(v)
         # FIXME: for now, only support tuples, with no length checking!!!
         is_tuple = ctxt.add_local(ctxt.types.int, 'is_tuple')
-        ctxt.add_call(is_tuple, 'PyTuple_CheckExact', (v, ))
+        ctxt.add_call(is_tuple, ctxt.globals_.PyTuple_CheckExact, (v, ))
         is_tuple_ctxt, not_tuple_ctxt = \
             ctxt.add_conditional(is_tuple, '!=', ConstInt(ctxt.types.int, 0),
                                  true_label='is_tuple',
@@ -1385,7 +1547,7 @@ class UNPACK_SEQUENCE(BytecodeOp):
 
         ctxt = is_tuple_ctxt
         tuple_size = ctxt.add_local(ctxt.types.Py_ssize_t, 'tuple_size')
-        ctxt.add_call(tuple_size, 'PyTuple_GET_SIZE', (v, ))
+        ctxt.add_call(tuple_size, ctxt.globals_.PyTuple_GET_SIZE, (v, ))
         correct_tuple_size, incorrect_tuple_size = \
             ctxt.add_conditional(tuple_size, '==', ConstInt(ctxt.types.int, self.arg),
                                  true_label='correct_tuple_size',
@@ -1395,7 +1557,9 @@ class UNPACK_SEQUENCE(BytecodeOp):
         oparg = self.arg
         while oparg:
             oparg -= 1
-            ctxt.add_call(w, 'PyTuple_GET_ITEM', (v, ConstInt(ctxt.types.int, oparg)))
+            ctxt.add_call(w,
+                          ctxt.globals_.PyTuple_GET_ITEM,
+                          (v, ConstInt(ctxt.types.int, oparg)))
             ctxt.Py_INCREF(w)
             ctxt.PUSH(w)
         ctxt.Py_DECREF(v)
@@ -1406,7 +1570,7 @@ class UNPACK_SEQUENCE(BytecodeOp):
 
         ctxt = not_tuple_ctxt
         is_list = ctxt.add_local(ctxt.types.int, 'is_list')
-        ctxt.add_call(is_list, 'PyList_CheckExact', (v, ))
+        ctxt.add_call(is_list, ctxt.globals_.PyList_CheckExact, (v, ))
         is_list_ctxt, not_list_ctxt = \
             ctxt.add_conditional(is_list, '!=', ConstInt(ctxt.types.int, 0),
                                  true_label='is_list',
@@ -1414,7 +1578,7 @@ class UNPACK_SEQUENCE(BytecodeOp):
 
         ctxt = is_list_ctxt
         list_size = ctxt.add_local(ctxt.types.Py_ssize_t, 'list_size')
-        ctxt.add_call(list_size, 'PyList_GET_SIZE', (v, ))
+        ctxt.add_call(list_size, ctxt.globals_.PyList_GET_SIZE, (v, ))
         correct_list_size, incorrect_list_size = \
             ctxt.add_conditional(list_size, '==', ConstInt(ctxt.types.int, self.arg),
                                  true_label='correct_list_size',
@@ -1425,7 +1589,7 @@ class UNPACK_SEQUENCE(BytecodeOp):
         while oparg:
             oparg -= 1
             ctxt.add_call(w,
-                          'PyList_GET_ITEM',
+                          ctxt.globals_.PyList_GET_ITEM,
                           (v, ConstInt(ctxt.types.int, oparg)))
             ctxt.Py_INCREF(w)
             ctxt.PUSH(w)
@@ -1472,7 +1636,7 @@ class STORE_ATTR(BytecodeOp):
         ctxt.assign(u, ctxt.SECOND())
         ctxt.STACKADJ(-2)
         ctxt.add_comment('v.w = u')
-        ctxt.add_call(err, 'PyObject_SetAttr', (v, w, u))
+        ctxt.add_call(err, ctxt.globals_.PyObject_SetAttr, (v, w, u))
         ctxt.Py_DECREF(v)
         ctxt.Py_DECREF(u)
         true_ctxt, false_ctxt = ctxt.add_conditional(err, '==', ConstInt(0), likely=True)
@@ -1527,7 +1691,9 @@ class LOAD_GLOBAL(BytecodeOp):
         if 1:
             # Simplify optimization by deferring inlining the impl until
             # later:
-            ctxt.add_call(x, 'impl_LOAD_GLOBAL', (ctxt.compiler.f, w, ))
+            ctxt.add_call(x,
+                          ctxt.globals_.impl_LOAD_GLOBAL,
+                          (ctxt.compiler.f, w, ))
             true_ctxt, false_ctxt = ctxt.add_conditional(
                 x, '!=', NULL(ctxt.types.PyObjectPtr), likely=True)
             true_ctxt.PUSH(x)
@@ -1538,7 +1704,7 @@ class LOAD_GLOBAL(BytecodeOp):
                 Expression('PyDict_CheckExact(f->f_globals) && PyDict_CheckExact(f->f_builtins)'),
                 '!=', ConstInt(0))
             merge_ctxt = ctxt.add_block()
-            true_ctxt.add_call(x, '_PyDict_LoadGlobal',
+            true_ctxt.add_call(x, ctxt.globals_._PyDict_LoadGlobal,
                                (Expression('(PyDictObject *)f->f_globals'),
                                 Expression('(PyDictObject *)f->f_builtins'),
                                 w))
@@ -1551,11 +1717,11 @@ class LOAD_GLOBAL(BytecodeOp):
             false_ctxt2.Py_INCREF(x)
             false_ctxt2.add_jump(merge_ctxt)
             false_ctxt.add_comment('Slow-path if globals or builtins is not a dict')
-            false_ctxt.add_call(x, 'PyObject_GetItem',
+            false_ctxt.add_call(x, ctxt.globals_.PyObject_GetItem,
                                 (Expression('f->f_globals'),
                                  w))
             false_ctxt.writeln('    if (x == NULL) {')
-            false_ctxt.add_call(x, 'PyObject_GetItem',
+            false_ctxt.add_call(x, ctxt.globals_.PyObject_GetItem,
                                 (Expression('f->f_builtins'),
                                  w))
             false_ctxt.writeln('        if (x == NULL) {')
@@ -1596,11 +1762,11 @@ class BUILD_TUPLE(BytecodeOp):
         #         DISPATCH();
         #     }
         #     break;
-        ctxt.add_call(x, 'PyTuple_New', (ConstInt(ctxt.types.int, self.arg), ))
+        ctxt.add_call(x, ctxt.globals_.PyTuple_New, (ConstInt(ctxt.types.int, self.arg), ))
         true_ctxt, false_ctxt = ctxt.add_conditional(x, '!=', ctxt.NULL(), likely=True)
         # unroll the loop:
         for i in range(self.arg-1 , -1, -1):
-            true_ctxt.add_call(None, 'PyTuple_SET_ITEM',
+            true_ctxt.add_call(None, ctxt.globals_.PyTuple_SET_ITEM,
                                (x, ConstInt(ctxt.types.int, i), true_ctxt.TOP()))
             true_ctxt.STACKADJ(-1)
         true_ctxt.PUSH(x)
@@ -1622,12 +1788,12 @@ class BUILD_LIST(BytecodeOp):
         #    }
         #    break;
         ctxt.add_call(x,
-                      'PyList_New',
+                      ctxt.globals_.PyList_New,
                       (ConstInt(ctxt.types.int, self.arg), ))
         true_ctxt, false_ctxt = ctxt.add_conditional(x, '!=', ctxt.NULL(), likely=True)
         # unroll the loop:
         for i in range(self.arg-1 , -1, -1):
-            true_ctxt.add_call(None, 'PyList_SET_ITEM',
+            true_ctxt.add_call(None, ctxt.globals_.PyList_SET_ITEM,
                                (x, ConstInt(ctxt.types.int, i), true_ctxt.TOP()))
             true_ctxt.STACKADJ(-1)
         true_ctxt.PUSH(x)
@@ -1646,7 +1812,7 @@ class BUILD_MAP(BytecodeOp):
         #    if (x != NULL) DISPATCH();
         #    break;
         ctxt.add_call(x,
-                      '_PyDict_NewPresized',
+                      ctxt.globals_._PyDict_NewPresized,
                       (ConstInt(ctxt.types.Py_ssize_t, self.arg),) )
         ctxt.PUSH(x)
         true_ctxt, false_ctxt = ctxt.add_conditional(x, '!=', ctxt.NULL(), likely=True)
@@ -1676,7 +1842,7 @@ class STORE_MAP(BytecodeOp):
         ctxt.STACKADJ(-2);
         ctxt.writeln('assert (PyDict_CheckExact(v));') # FIXME
         ctxt.add_comment('v[w] = u')
-        ctxt.add_call(err, 'PyDict_SetItem', (v, w, u))
+        ctxt.add_call(err, ctxt.globals_.PyDict_SetItem, (v, w, u))
         ctxt.Py_DECREF(u)
         ctxt.Py_DECREF(w)
         true_ctxt, false_ctxt = ctxt.add_conditional(
@@ -1703,7 +1869,7 @@ class LOAD_ATTR(BytecodeOp):
         #    break;
         ctxt.assign(w, Expression('GETITEM(names, %i)' % self.arg))
         ctxt.assign(v, ctxt.TOP())
-        ctxt.add_call(x, 'PyObject_GetAttr', (v, w))
+        ctxt.add_call(x, ctxt.globals_.PyObject_GetAttr, (v, w))
         ctxt.Py_DECREF(v)
         ctxt.SET_TOP(x)
         true_ctxt, false_ctxt = ctxt.add_conditional(x, '!=', ctxt.NULL(), likely=True)
@@ -1751,13 +1917,13 @@ class COMPARE_OP(BytecodeOp):
         elif arg == PyCmp_IS_NOT:
             ctxt.assign(res, Expression('(%s != %s)' % (v.name, w.name))) # FIXME
         elif arg == PyCmp_IN:
-            ctxt.add_call(res, 'PySequence_Contains', (w, v))
+            ctxt.add_call(res, ctxt.globals_.PySequence_Contains, (w, v))
             true_ctxt, false_ctxt = ctxt.add_conditional(res, '<', ConstInt(0))
             true_ctxt.assign(x, ctxt.NULL())
             true_ctxt.add_jump(merge_ctxt)
             next_ctxt = false_ctxt
         elif arg == PyCmp_NOT_IN:
-            ctxt.add_call(res, 'PySequence_Contains', (w, v))
+            ctxt.add_call(res, ctxt.globals_.PySequence_Contains, (w, v))
             true_ctxt, false_ctxt = ctxt.add_conditional(res, '<', ConstInt(0))
             true_ctxt.assign(x, ctxt.NULL())
             true_ctxt.add_jump(merge_ctxt.addr)
@@ -1787,7 +1953,8 @@ class COMPARE_OP(BytecodeOp):
             ctxt.writeln('break;')
         else:
             # use enum cmp_op when writing out the C, for clarity:
-            ctxt.add_call(x, 'PyObject_RichCompare', (v, w, EnumValue(arg, enum_cmp_op[arg])))
+            ctxt.add_call(x, ctxt.globals_.PyObject_RichCompare,
+                          (v, w, EnumValue(arg, enum_cmp_op[arg])))
             return ctxt
         next_ctxt.assign(x, Expression('%s ? Py_True : Py_False' % res.name)) # FIXME
         next_ctxt.add_call(None, 'Py_INCREF', (x,))
@@ -1882,7 +2049,7 @@ class GET_ITER(BytecodeOp):
         v = ctxt.compiler.v
         ctxt.assign(v, ctxt.TOP())
         x = ctxt.compiler.x
-        ctxt.add_call(x, 'PyObject_GetIter', (v,))
+        ctxt.add_call(x, ctxt.globals_.PyObject_GetIter, (v,))
         ctxt.Py_DECREF(v)
         true_ctxt, false_ctxt = ctxt.add_conditional(x, '!=', ctxt.NULL(), likely=True)
         true_ctxt.SET_TOP(x)
@@ -1917,7 +2084,7 @@ class FOR_ITER(BytecodeOp):
         v = ctxt.compiler.v
         ctxt.assign(v, ctxt.TOP())
         x = ctxt.compiler.x
-        ctxt.add_call(x, 'INVOKE_tp_iternext', (v,)) # FIXME: add macro
+        ctxt.add_call(x, ctxt.globals_.INVOKE_tp_iternext, (v,)) # FIXME: add macro
         true_ctxt, false_ctxt = \
             ctxt.add_conditional(x, '!=', ctxt.NULL(), likely=True,
                                  true_label='nonnull_tp_iternext',
@@ -1927,19 +2094,20 @@ class FOR_ITER(BytecodeOp):
         true_ctxt.DISPATCH()
 
         true_ctxt2, false_ctxt2 = \
-            false_ctxt.add_conditional(Call('PyErr_Occurred', ()),
+            false_ctxt.add_conditional(Call(ctxt.globals_.PyErr_Occurred, ()),
                                        '!=', ConstInt(ctxt.types.int, 0),
                                        true_label='PyErr_Occurred',
                                        false_label='not_PyErr_Occurred')
 
         true_ctxt3, false_ctxt3 = \
-            true_ctxt2.add_conditional(Call('PyErr_ExceptionMatches',
-                                            (Global(ctxt.types.PyObjectPtr, 'PyExc_StopIteration'), )),
-                                       '==', ConstInt(ctxt.types.int, 0),
-                                       true_label='is_StopIteration',
-                                       false_label='is_not_StopIteration')
+            true_ctxt2.add_conditional(
+                Call(ctxt.globals_.PyErr_ExceptionMatches,
+                     (Global(ctxt.types.PyObjectPtr, 'PyExc_StopIteration'), )),
+                '==', ConstInt(ctxt.types.int, 0),
+                true_label='is_StopIteration',
+                false_label='is_not_StopIteration')
         true_ctxt3.break_to_on_error()
-        false_ctxt3.add_call(None, 'PyErr_Clear', ())
+        false_ctxt3.add_call(None, ctxt.globals_.PyErr_Clear, ())
         false_ctxt3.add_jump(false_ctxt2)
 
         false_ctxt2.add_comment('iterator ended normally')
@@ -2016,8 +2184,8 @@ class CALL_FUNCTION(BytecodeOp):
         func = ctxt.POP()
         # positional args are in reverse order:
         callargs = tuple([func] + args[::-1] + kwargs)
-        ctxt.add_call(x, 'impl_CALL_FUNCTION_na%i_nk%i' % (na, nk),
-                      callargs)
+        fn = ctxt.globals_.get_impl_CALL_FUNCTION(na, nk)
+        ctxt.add_call(x, fn, callargs)
         true_ctxt, false_ctxt = ctxt.add_conditional(x, '!=', ctxt.NULL(), likely=True)
         true_ctxt.PUSH(x)
         true_ctxt.DISPATCH()
@@ -2064,7 +2232,7 @@ class BUILD_SLICE(BytecodeOp):
             ctxt.assign(w, ctxt.NULL())
         ctxt.POP(v)
         ctxt.assign(u, ctxt.TOP())
-        ctxt.add_call(x, 'PySlice_New', (u, v, w))
+        ctxt.add_call(x, ctxt.globals_.PySlice_New, (u, v, w))
         ctxt.Py_DECREF(u)
         ctxt.Py_DECREF(v)
         ctxt.Py_XDECREF(w)

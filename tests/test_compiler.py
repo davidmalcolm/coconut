@@ -52,7 +52,7 @@ class CompilationTests(unittest.TestCase):
         self.assertIsInstance(op, Eval)
         call = op.expr
         self.assertIsInstance(call, Call)
-        self.assertEqual(call.fnname, 'Py_INCREF')
+        self.assertEqual(call.fn.fnname, 'Py_INCREF')
         self.assertEqual(len(call.args), 1)
         self.assertEqual(call.args[0].name, argname)
 
