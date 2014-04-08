@@ -355,11 +355,11 @@ class IrType:
 class IrStruct(IrType):
     def __init__(self, types, name):
         IrType.__init__(self, types, name)
-        self.fields = []
+        self.fields = OrderedDict()
 
     def setup_fields(self, fieldinfo):
         for type_, name in fieldinfo:
-            self.fields.append(IrField(type_, name))
+            self.fields[name] = IrField(type_, name)
 
 class IrPointerType(IrType):
     def __init__(self, types, other):
@@ -402,12 +402,17 @@ class IrGlobals:
 ############################################################################
 
 class Expression:
+    def __init__(self, type_):
+        assert isinstance(type_, IrType)
+        self.type_ = type_
+
     def to_c(self):
         raise NotImplementedError
 
 class Cast(Expression):
     # Generic LValue, containing no references needed by the optimizer
     def __init__(self, expr, newtype):
+        Expression.__init__(self, newtype)
         assert isinstance(newtype, IrType)
         self.expr = expr
         self.newtype = newtype
@@ -420,18 +425,13 @@ class Cast(Expression):
 
 class LValue(Expression):
     # Generic LValue, containing no references needed by the optimizer
-    def __init__(self, code):
-        self.code = code
-
-    def __repr__(self):
-        return 'LValue(code=%r)' % self.code
-
-    def to_c(self):
-        return self.code
+    def __init__(self, type_):
+        Expression.__init__(self, type_)
 
 class Param(LValue):
     def __init__(self, type_, name):
         assert isinstance(type_, IrType)
+        LValue.__init__(self, type_)
         self.type_ = type_
         self.name = name
         self.ssacounter = 0
@@ -447,7 +447,7 @@ class Param(LValue):
 class Local(LValue):
     def __init__(self, type_, name):
         assert isinstance(type_, IrType)
-        self.type_ = type_
+        LValue.__init__(self, type_)
         self.name = name
         self.ssacounter = 0
         self.ssanames = set()
@@ -462,7 +462,7 @@ class Local(LValue):
 class Global(LValue):
     def __init__(self, type_, name):
         assert isinstance(type_, IrType)
-        self.type_ = type_
+        LValue.__init__(self, type_)
         self.name = name
 
     def __repr__(self):
@@ -490,6 +490,7 @@ class SimpleLocal(Expression):
 
 class AddressOf(Expression):
     def __init__(self, lvalue):
+        Expression.__init__(self, lvalue.type_.get_pointer())
         self.lvalue = lvalue
 
     def __repr__(self):
@@ -500,7 +501,7 @@ class AddressOf(Expression):
 
 class Const(Expression):
     def __init__(self, type_, value):
-        self.type_ = type_
+        Expression.__init__(self, type_)
         self.value = value
 
     def __repr__(self):
@@ -812,7 +813,7 @@ class Conditional(IrOp):
         self.likely = likely
 
     def __repr__(self):
-        return ('Conditional(%r, %r, %r, %r, %r)'
+        return ('Conditional(%r, %r, %r)'
                 % (self.expr, self.true_block, self.false_block))
 
     def write(self, w):

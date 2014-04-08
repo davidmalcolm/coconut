@@ -22,10 +22,10 @@ from coconut.backend.libgccjit import GccJitBackend
 from coconut.ir import IrCFG, IrTypes, IrGlobals, \
     Param, Call, BinaryExpr, ConstInt, Comparison
 
-def to_gccjit(ircfg, types_, globals_):
+def to_gccjit(fns, types_, globals_):
     backend = GccJitBackend(types_, globals_)
-    result_fn = backend.compile(ircfg)
-    return result_fn
+    result = backend.compile(fns)
+    return result
 
 class IrTests(unittest.TestCase):
     def test_conditional(self):
@@ -72,7 +72,8 @@ class IrTests(unittest.TestCase):
         self.assertIn('return x * 2;', csrc)
         self.assertIn('return x - 5;', csrc)
 
-        result_fn = to_gccjit(cfg, types, globals_)
+        result = to_gccjit([cfg], types, globals_)
+        result_fn = result.get_code(cfg.fnname.encode())
         self.assertTrue(result_fn)
         int_int_func_type = ctypes.CFUNCTYPE(ctypes.c_int, ctypes.c_int)
         code = int_int_func_type(result_fn)
@@ -115,7 +116,8 @@ class IrTests(unittest.TestCase):
 
         b_entry.add_return(call)
 
-        result_fn = to_gccjit(fn, types, globals_)
+        result = to_gccjit([fn], types, globals_)
+        result_fn = result.get_code(fn.fnname.encode())
         self.assertTrue(result_fn)
         double_double_double_func_type = ctypes.CFUNCTYPE(
             ctypes.c_double, ctypes.c_double, ctypes.c_double)
@@ -123,6 +125,54 @@ class IrTests(unittest.TestCase):
         self.assertEqual(code(3, 4), 5)
         self.assertEqual(code(5, 12), 13)
 
+    def test_helper_function(self):
+        # Let's build equivalent of:
+        #
+        #   extern double sqrt(double x);
+        #   static inline double square(double a) { return a * a; }
+        #
+        #   double
+        #   hypot(double x, double y)
+        #   {
+        #       return sqrt(square(x) + square(y));
+        #   }
+
+        types = IrTypes()
+        globals_ = IrGlobals(types)
+
+        double_ = types.new_type('double')
+
+        sqrt = globals_.new_function(double_, 'sqrt', [Param(double_, 'x')])
+
+        a = Param(double_, 'a')
+        square = IrCFG(double_, 'square', [a])
+        b_entry = square.add_block('entry')
+        b_entry.add_return(BinaryExpr(double_, a, '*', a))
+
+        x = Param(double_, 'x')
+        y = Param(double_, 'y')
+        hypot = IrCFG(double_, 'hypot', [x, y])
+
+        b_entry = hypot.add_block('entry')
+        call = Call(
+            sqrt,
+            (BinaryExpr(
+                double_,
+                Call(square, (x,)),
+                '+',
+                Call(square, (y,))),))
+        self.assertEqual(call.to_c(), 'sqrt(square(x) + square(y))')
+
+        b_entry.add_return(call)
+
+        result = to_gccjit([square, hypot], types, globals_)
+        result_fn = result.get_code(hypot.fnname.encode())
+        self.assertTrue(result_fn)
+        double_double_double_func_type = ctypes.CFUNCTYPE(
+            ctypes.c_double, ctypes.c_double, ctypes.c_double)
+        code = double_double_double_func_type(result_fn)
+        self.assertEqual(code(3, 4), 5)
+        self.assertEqual(code(5, 12), 13)
 
 if __name__ == '__main__':
     unittest.main()

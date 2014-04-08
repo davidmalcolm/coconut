@@ -15,11 +15,14 @@
 #   along with this program.  If not, see
 #   <http://www.gnu.org/licenses/>.
 
+from collections import OrderedDict
+
 import gccjit
 
 from coconut.ir import Comment, Assignment, Local, Call, FieldDereference, \
     IrType, IrPointerType, IrStruct, Conditional, Param, ConstInt, Return, \
-    BinaryExpr, IrConstType, IrFunction, ConstString, Comparison
+    BinaryExpr, IrConstType, IrFunction, ConstString, Comparison, Eval, \
+    Jump, Whitespace, Global, AddressOf
 
 class GccJitBackend:
     def __init__(self, types, globals_):
@@ -45,12 +48,16 @@ class GccJitBackend:
             self.typedict[irtype] = self._make_type(irtype)
 
         # Second pass: fill in fields of any structs
+        self.fielddict = {}
         for irtype in types.types.values():
             if isinstance(irtype, IrStruct):
-                fields = [self.ctxt.new_field(self.typedict[field.type_],
-                                              field.name.encode('utf-8'))
-                          for field in irtype.fields]
-                self.typedict[irtype].set_fields(fields)
+                gfields = []
+                for irfield in irtype.fields.values():
+                    gfield = self.ctxt.new_field(self.typedict[irfield.type_],
+                                                 irfield.name.encode())
+                    gfields.append(gfield)
+                    self.fielddict[irfield] = gfield
+                self.typedict[irtype].set_fields(gfields)
 
         # Now create global functions:
         self.fndict = {}
@@ -75,7 +82,7 @@ class GccJitBackend:
         elif isinstance(irtype, IrConstType):
             return self.typedict[irtype.other].get_const()
         elif isinstance(irtype, IrStruct):
-            return self.ctxt.new_struct(irtype.name.encode('utf-8'))
+            return self.ctxt.new_struct(irtype.name.encode())
         elif isinstance(irtype, IrType):
             if irtype.name == 'void':
                 return self.ctxt.get_type(gccjit.TypeKind.VOID)
@@ -92,37 +99,45 @@ class GccJitBackend:
 
         raise NotImplementedError(irtype)
 
-    def compile(self, ircfg):
+    def compile(self, irfns):
         self.params = {}
+        self.locals = {}
+        for irfn in irfns:
+            self.fndict[irfn] = self.create_fn_decl(irfn)
+        for irfn in irfns:
+            self.create_fn_body(irfn)
+        return self.ctxt.compile()
+
+    def create_fn_decl(self, irfn):
         params = []
-        for irparam in ircfg.params:
+        for irparam in irfn.params:
             gparam = self.ctxt.new_param(self.typedict[irparam.type_],
-                                         irparam.name.encode('utf-8'))
+                                         irparam.name.encode())
             params.append(gparam)
             self.params[irparam] = gparam
 
-        out_fn = self.ctxt.new_function(gccjit.FunctionKind.EXPORTED,
-                                        self.typedict[ircfg.returntype],
-                                        ircfg.fnname.encode('utf-8'),
-                                        params)
+        return self.ctxt.new_function(gccjit.FunctionKind.EXPORTED,
+                                      self.typedict[irfn.returntype],
+                                      irfn.fnname.encode(),
+                                      params)
+    def create_fn_body(self, ircfg):
+        out_fn = self.fndict[ircfg]
 
-        self.locals = {}
         for irlocal in ircfg.locals:
-            print(irlocal)
             self.locals[irlocal] = out_fn.new_local(self.typedict[irlocal.type_],
-                                                    irlocal.name.encode('utf-8'))
+                                                    irlocal.name.encode())
 
         # Create all blocks:
         blockdict = {}
         for irblock in ircfg.blocks:
-            blockdict[irblock] = out_fn.new_block(irblock.addr.encode('utf-8'))
+            blockdict[irblock] = out_fn.new_block(irblock.addr.encode())
 
         # Now populate them:
         for irblock in ircfg.blocks:
             gblock = blockdict[irblock]
             for op in irblock.ops:
-                if isinstance(op, Comment):
-                    gblock.add_comment(op.text.encode('utf-8'))
+                if isinstance(op, (Comment, Whitespace)):
+                    gblock.add_comment(op.text.encode())
                 elif isinstance(op, Assignment):
                     gblock.add_assignment(self.make_lvalue(op.lhs),
                                           self.make_rvalue(op.rhs))
@@ -131,22 +146,27 @@ class GccJitBackend:
                         self.make_rvalue(op.expr),
                         blockdict[op.true_block],
                         blockdict[op.false_block])
+                elif isinstance(op, Eval):
+                    gblock.add_eval(self.make_rvalue(op.expr))
+                elif isinstance(op, Jump):
+                    gblock.end_with_jump(blockdict[op.dest_block])
                 elif isinstance(op, Return):
-                    gblock.end_with_return(
-                        self.make_rvalue(op.expr))
+                    gblock.end_with_return(self.make_rvalue(op.expr))
                 else:
                     raise NotImplementedError(op)
-
-        result = self.ctxt.compile()
-        return result.get_code(ircfg.fnname.encode('utf-8'))
 
     def make_lvalue(self, expr):
         if isinstance(expr, Local):
             return self.locals[expr]
         elif isinstance(expr, FieldDereference):
             rvalue = self.make_rvalue(expr.ptr)
-            field = self.get_field(rvalue.get_type(), expr.fieldname)
-            return self.make_rvalue(expr.ptr).dereference_field(field)
+            assert isinstance(expr.ptr.type_, IrPointerType)
+            irfield = expr.ptr.type_.other.fields[expr.fieldname]
+            gfield = self.fielddict[irfield]
+            return self.make_rvalue(expr.ptr).dereference_field(gfield)
+        elif isinstance(expr, Global):
+            return self.ctxt.new_global(self.typedict[expr.type_],
+                                        expr.name.encode())
         raise NotImplementedError(expr)
 
     def make_rvalue(self, expr):
@@ -159,6 +179,8 @@ class GccJitBackend:
             args = [self.make_rvalue(arg)
                     for arg in expr.args]
             return self.ctxt.new_call(func, args)
+        elif isinstance(expr, AddressOf):
+            return self.make_lvalue(expr.lvalue).get_address()
         elif isinstance(expr, BinaryExpr):
             opdict = {'+':gccjit.BinaryOp.PLUS,
                       '-':gccjit.BinaryOp.MINUS,
@@ -180,10 +202,22 @@ class GccJitBackend:
                 self.make_rvalue(expr.lhs),
                 self.make_rvalue(expr.rhs))
         elif isinstance(expr, ConstInt):
+            if isinstance(expr.type_, IrPointerType):
+                return self.ctxt.new_rvalue_from_ptr(self.typedict[expr.type_],
+                                                     expr.value)
             return self.ctxt.new_rvalue_from_int(self.typedict[expr.type_],
                                                  expr.value)
         elif isinstance(expr, ConstString):
             return self.ctxt.new_string_literal(expr.value.encode())
+        elif isinstance(expr, FieldDereference):
+            rvalue = self.make_rvalue(expr.ptr)
+            assert isinstance(expr.ptr.type_, IrPointerType)
+            irfield = expr.ptr.type_.other.fields[expr.fieldname]
+            gfield = self.fielddict[irfield]
+            return self.make_rvalue(expr.ptr).dereference_field(gfield)
+        elif isinstance(expr, Global):
+            return self.ctxt.new_global(self.typedict[expr.type_],
+                                        expr.name.encode())
         raise NotImplementedError(expr)
 
     def make_function(self, fnname):

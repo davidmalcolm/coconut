@@ -36,7 +36,8 @@ class Globals(IrGlobals):
                              types.PyObjectPtr)
         self.Py_True = Cast(AddressOf(Global(types.PyLongObject, '_Py_TrueStruct')),
                              types.PyObjectPtr)
-        self.Py_None = Global(types.PyObjectPtr, 'Py_None')
+        self.Py_None = AddressOf(Global(types.PyObject, '_Py_NoneStruct'))
+
         self.PyExc_ValueError = Global(types.PyObjectPtr, 'PyExc_ValueError')
 
         GLOBAL_FUNCTIONS = ([

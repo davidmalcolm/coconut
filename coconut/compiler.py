@@ -109,6 +109,7 @@ class Types(IrTypes):
 
         self.PyObject = self.new_struct('PyObject')
         self.PyObjectPtr = self.PyObject.get_pointer()
+        self.PyObjectPtrPtr = self.PyObjectPtr.get_pointer()
 
         self.PyFrameObject = self.new_struct('PyFrameObject')
         self.PyFrameObjectPtr = self.PyFrameObject.get_pointer()
@@ -121,6 +122,9 @@ class Types(IrTypes):
 
         self.PyThreadState = self.new_struct('PyThreadState')
         self.PyThreadStatePtr = self.PyThreadState.get_pointer()
+
+        self.PyTypeObject = self.new_struct('PyTypeObject')
+        self.PyTypeObjectPtr = self.PyTypeObject.get_pointer()
 
         self.PyInterpreterState = self.new_struct('PyInterpreterState')
         self.PyInterpreterStatePtr = self.PyInterpreterState.get_pointer()
@@ -140,6 +144,50 @@ class Types(IrTypes):
 
                 # ...etc; this is only a subset of the fields.
             ])
+
+        PyObject_HEAD = [
+            # FIXME: this assumes an optimized build
+            (self.Py_ssize_t, 'ob_refcnt'),
+            (self.PyTypeObjectPtr, 'ob_type')]
+        PyObject_VAR_HEAD = PyObject_HEAD + [ (self.Py_ssize_t, 'ob_size') ]
+
+        self.PyCodeObject.setup_fields(
+            PyObject_HEAD +
+            [
+                (self.int,         'co_argcount'),
+                (self.int,         'co_kwonlyargcount'),
+                (self.int,         'co_nlocals'),
+                (self.int,         'co_stacksize'),
+                (self.int,         'co_flags'),
+                (self.PyObjectPtr, 'co_code'),
+                (self.PyObjectPtr, 'co_consts'),
+                (self.PyObjectPtr, 'co_names'),
+                # ...etc
+            ]
+        )
+
+        self.PyFrameObject.setup_fields(
+            PyObject_VAR_HEAD +
+            [
+                (self.PyFrameObjectPtr, 'f_back'),
+                (self.PyCodeObjectPtr,  'f_code'),
+                (self.PyObjectPtr,      'f_builtins'),
+                (self.PyObjectPtr,      'f_globals'),
+                (self.PyObjectPtr,      'f_locals'),
+                (self.PyObjectPtrPtr,   'f_valuestack'),
+                (self.PyObjectPtrPtr,   'f_stacktop'),
+                (self.PyObjectPtr,      'f_trace'),
+                (self.PyObjectPtr,      'f_exc_type'),
+                (self.PyObjectPtr,      'f_exc_value'),
+                (self.PyObjectPtr,      'f_exc_traceback'),
+                (self.PyThreadStatePtr, 'f_tstate'),
+                (self.int,              'f_lasti'),
+                (self.int,              'f_lineno'),
+                (self.int,              'f_iblock'),
+                #(self.PyTryBlockArray,  'f_blockstack') # [CO_MAXBLOCKS]
+                #(self.PyObjectPtrArray, 'f_localsplus'),
+            ]
+        )
 
 class Compiler:
     def __init__(self):

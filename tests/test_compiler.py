@@ -115,9 +115,9 @@ class CompilationTests(unittest.TestCase):
         self.assert_is_c(ops[3], 'names = co->co_names;\n')
         self.assert_is_c(ops[4], 'consts = co->co_consts;\n')
         self.assert_is_c(ops[5], 'err = 0;\n')
-        self.assert_is_c(ops[6], 'x = Py_None;\n')
+        self.assert_is_c(ops[6], 'x = &_Py_NoneStruct;\n')
         self.assert_is_c(ops[7], 'w = NULL;\n')
-        self.assert_is_c(ops[8], 'const0_None = Py_None;\n')
+        self.assert_is_c(ops[8], 'const0_None = &_Py_NoneStruct;\n')
         self.assert_is_jump(ops[9], b_LOAD_CONST)
         self.assert_is_c(ops[9], 'goto bytecode_offset_0_LOAD_CONST;\n')
 
@@ -238,7 +238,7 @@ class CompilationTests(unittest.TestCase):
         ircfg = compile_(f)
         csrc = ircfg.to_c()
         self.assertIn('BINARY_POWER', csrc)
-        self.assertIn('x = PyNumber_Power(v, w, Py_None);', csrc)
+        self.assertIn('x = PyNumber_Power(v, w, &_Py_NoneStruct);', csrc)
 
     def test_BINARY_MULTIPLY(self):
         def f(a, b):
@@ -264,7 +264,7 @@ class CompilationTests(unittest.TestCase):
         ircfg = compile_(f)
         csrc = ircfg.to_c()
         self.assertIn('INPLACE_POWER', csrc)
-        self.assertIn('x = PyNumber_InPlacePower(v, w, Py_None);', csrc)
+        self.assertIn('x = PyNumber_InPlacePower(v, w, &_Py_NoneStruct);', csrc)
 
     def test_BUILD_MAP(self):
         def f(a, b):
