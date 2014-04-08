@@ -78,6 +78,8 @@ WHY_SILENCED =  0x0080 #  Exception silenced by 'with'
 # From code.h:
 CO_GENERATOR    = 0x0020
 
+CO_MAXBLOCKS = 20
+
 class CoConst(Local):
     # a local PyObject* reference to an entry in the co_consts table
     def __init__(self, co_consts, type_, idx):
@@ -104,11 +106,13 @@ class Types(IrTypes):
         self.char_ptr = self.char.get_pointer()
         self.const_char_ptr = self.char.get_const().get_pointer()
         self.int = self.new_type('int')
+        self.int_ptr = self.int.get_pointer()
         self.Py_ssize_t = self.new_type('Py_ssize_t')
 
         self.PyObject = self.new_struct('PyObject')
         self.PyObjectPtr = self.PyObject.get_pointer()
         self.PyObjectPtrPtr = self.PyObjectPtr.get_pointer()
+        self.PyObjectPtrArray = self.PyObjectPtr.get_array(1)
 
         self.PyFrameObject = self.new_struct('PyFrameObject')
         self.PyFrameObjectPtr = self.PyFrameObject.get_pointer()
@@ -128,19 +132,17 @@ class Types(IrTypes):
         self.PyInterpreterState = self.new_struct('PyInterpreterState')
         self.PyInterpreterStatePtr = self.PyInterpreterState.get_pointer()
 
+        self.PyTryBlock = self.new_struct('PyTryBlock')
+
         self.field_dicts = {}
 
         self.PyThreadState.setup_fields(
             [
-                #struct _ts *next;
                 (self.PyThreadStatePtr, 'next'),
-
-                #PyInterpreterState *interp;
                 (self.PyInterpreterStatePtr, 'interp'),
-
-                #struct _frame *frame;
                 (self.PyFrameObjectPtr, 'frame'),
-
+                (self.int, 'recursion_depth'),
+                (self.char, 'overflowed'),
                 # ...etc; this is only a subset of the fields.
             ])
 
@@ -149,6 +151,8 @@ class Types(IrTypes):
             (self.Py_ssize_t, 'ob_refcnt'),
             (self.PyTypeObjectPtr, 'ob_type')]
         PyObject_VAR_HEAD = PyObject_HEAD + [ (self.Py_ssize_t, 'ob_size') ]
+
+        self.PyObject.setup_fields(PyObject_HEAD)
 
         self.PyCodeObject.setup_fields(
             PyObject_HEAD +
@@ -161,7 +165,16 @@ class Types(IrTypes):
                 (self.PyObjectPtr, 'co_code'),
                 (self.PyObjectPtr, 'co_consts'),
                 (self.PyObjectPtr, 'co_names'),
+                (self.PyObjectPtr, 'co_varnames'),
                 # ...etc
+            ]
+        )
+
+        self.PyTryBlock.setup_fields(
+            [
+                (self.int, 'b_type'),
+                (self.int, 'b_handler'),
+                (self.int, 'b_level')
             ]
         )
 
@@ -183,8 +196,8 @@ class Types(IrTypes):
                 (self.int,              'f_lasti'),
                 (self.int,              'f_lineno'),
                 (self.int,              'f_iblock'),
-                #(self.PyTryBlockArray,  'f_blockstack') # [CO_MAXBLOCKS]
-                #(self.PyObjectPtrArray, 'f_localsplus'),
+                (self.PyTryBlock.get_array(CO_MAXBLOCKS), 'f_blockstack'),
+                (self.PyObjectPtrArray, 'f_localsplus'),
             ]
         )
 
@@ -200,6 +213,8 @@ class Globals(IrGlobals):
 
         self.PyExc_ValueError = Global(types.PyObjectPtr, 'PyExc_ValueError')
 
+        self._Py_CheckRecursionLimit = Global(types.int, '_Py_CheckRecursionLimit')
+
         GLOBAL_FUNCTIONS = ([
             # Alphabetized by fnname.  Not all of these are real API functions;
             # we may want to build always-inlined helper functions for these
@@ -211,9 +226,7 @@ class Globals(IrGlobals):
             # FIXME:
             (types.bool, 'INVOKE_tp_iternext', []),
 
-            # Theses are macros in ceval.h
-            (types.bool, 'Py_EnterRecursiveCall', [types.const_char_ptr]),
-            (types.void, 'Py_LeaveRecursiveCall', []),
+            (types.int, '_Py_CheckRecursiveCall', [types.char_ptr]),
 
             (types.PyObjectPtr, '_PyDict_NewPresized', [types.Py_ssize_t]),
             (types.int, 'PyDict_SetItem', [types.PyObjectPtr,
@@ -260,7 +273,7 @@ class Globals(IrGlobals):
                                                 types.PyObjectPtr,
                                                 types.PyObjectPtr]),
 
-            (types.PyThreadStatePtr, 'PyThreadState_GET', []),
+            (types.PyThreadStatePtr, 'PyThreadState_Get', []),
 
             (types.int, 'PyTraceBack_Here', [types.PyFrameObjectPtr]),
 
@@ -318,6 +331,136 @@ class Globals(IrGlobals):
             setattr(self,
                     fnname,
                     self.new_function(returntype, fnname, params))
+
+        # For now, use act like the debug version of this macro,
+        # by calling the function:
+        self.PyThreadState_GET = self.PyThreadState_Get
+
+        self.make_helper_functions()
+
+    # Provide some extra helper functions
+
+    def get_helper_functions(self):
+        return [fn
+                for fn in self.functions
+                if isinstance(fn, IrCFG)]
+
+    def make_helper_functions(self):
+        self._make_Py_INCREF()
+        self._make__Py_MakeRecCheck()
+        self._make__Py_MakeEndRecCheck()
+        self._make_Py_EnterRecursiveCall()
+        self._make_Py_LeaveRecursiveCall()
+
+    def _make_Py_INCREF(self):
+        obj = Param(self.types.PyObjectPtr, 'obj')
+        self.Py_INCREF = self.new_helper_function(
+            self.types.void, 'Py_INCREF', [obj])
+        b_entry = self.Py_INCREF.add_block('entry')
+        b_entry.add_assignment(
+            FieldDereference(obj, 'ob_refcnt'),
+            BinaryExpr(
+                self.types.Py_ssize_t,
+                FieldDereference(obj, 'ob_refcnt'),
+                '+',
+                ConstInt(self.types.Py_ssize_t, 1)))
+        b_entry.add_return(None)
+
+    # These correspond to macros in ceval.h:
+
+    def _make__Py_MakeRecCheck(self):
+        # Assuming !USE_STACK_CHECK:
+        #  #define _Py_MakeRecCheck(x)  (++(x) > _Py_CheckRecursionLimit)
+        # Macro manipulates its arg, so we pass a ptr:
+        x = Param(self.types.int_ptr, 'x')
+        self._Py_MakeRecCheck = self.new_helper_function(
+            self.types.bool, '_Py_MakeRecCheck', [x])
+        star_x = Dereference(x)
+        b_entry = self._Py_MakeRecCheck.add_block('entry')
+        b_entry.add_assignment(
+            star_x,
+            BinaryExpr(self.types.int, star_x, '+', ConstInt(self.types.int, 1)))
+        b_entry.add_return(
+            Comparison(star_x, '>', self._Py_CheckRecursionLimit))
+
+    def _make__Py_MakeEndRecCheck(self):
+        #  #define _Py_MakeEndRecCheck(x) \
+        #      (--(x) < ((_Py_CheckRecursionLimit > 100) \
+        #          ? (_Py_CheckRecursionLimit - 50) \
+        #          : (3 * (_Py_CheckRecursionLimit >> 2))))
+
+        # Macro manipulates its arg, not a copy, so we pass a
+        # ptr:
+        x = Param(self.types.int_ptr, 'x')
+        self._Py_MakeEndRecCheck = self.new_helper_function(
+            self.types.bool, '_Py_MakeEndRecCheck', [x])
+        star_x = Dereference(x)
+        b_entry = self._Py_MakeEndRecCheck.add_block('entry')
+        b_entry.add_assignment(
+            star_x,
+            BinaryExpr(self.types.int,
+                       star_x, '-', ConstInt(self.types.int, 1)))
+        b_true, b_false = b_entry.add_conditional(
+            Comparison(self._Py_CheckRecursionLimit,
+                       '>',
+                       ConstInt(self.types.int, 100)))
+        b_true.add_return(
+            Comparison(star_x, '<',
+                       BinaryExpr(self.types.int,
+                                  self._Py_CheckRecursionLimit,
+                                  '-',
+                                  ConstInt(self.types.int, 50))))
+        b_false.add_return(
+            Comparison(star_x, '<',
+                       BinaryExpr(self.types.int,
+                                  ConstInt(self.types.int, 3),
+                                  '*',
+                                  BinaryExpr(self.types.int,
+                                             self._Py_CheckRecursionLimit,
+                                             '>>',
+                                             ConstInt(self.types.int, 2)))))
+
+    def _make_Py_EnterRecursiveCall(self):
+        #  #define Py_EnterRecursiveCall(where)  \
+        #              (_Py_MakeRecCheck(PyThreadState_GET()->recursion_depth) &&  \
+        #               _Py_CheckRecursiveCall(where))
+        where = Param(self.types.const_char_ptr, 'where')
+        self.Py_EnterRecursiveCall = self.new_helper_function(
+            self.types.bool, 'Py_EnterRecursiveCall', [where])
+        b_entry = self.Py_EnterRecursiveCall.add_block('entry')
+        b_entry.add_return(
+            BinaryExpr(
+                self.types.bool,
+                self._Py_MakeRecCheck(
+                    AddressOf(
+                        FieldDereference(
+                            self.PyThreadState_GET(),
+                            'recursion_depth'))),
+                '&&',
+                Cast(
+                    self._Py_CheckRecursiveCall(where),
+                    self.types.bool)))
+
+    def _make_Py_LeaveRecursiveCall(self):
+        #  #define Py_LeaveRecursiveCall()                         \
+        #      do{ if(_Py_MakeEndRecCheck(PyThreadState_GET()->recursion_depth))  \
+        #        PyThreadState_GET()->overflowed = 0;  \
+        #      } while(0)
+        self.Py_LeaveRecursiveCall = self.new_helper_function(
+            self.types.void, 'Py_LeaveRecursiveCall', [])
+        b_entry = self.Py_LeaveRecursiveCall.add_block('entry')
+        b_true, b_false = b_entry.add_conditional(
+            self._Py_MakeEndRecCheck(
+                AddressOf(
+                    FieldDereference(self.PyThreadState_GET(),
+                                     'recursion_depth'))))
+        b_true.add_assignment(
+            FieldDereference(
+                self.PyThreadState_GET(),
+                'overflowed'),
+            ConstInt(self.types.char, 0))
+        b_true.add_void_return()
+        b_false.add_void_return()
 
     def get_impl_CALL_FUNCTION(self, na, nk):
         # Cache of helpers for calling callables with

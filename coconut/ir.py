@@ -349,6 +349,9 @@ class IrType:
     def __repr__(self):
         return '%s(name=%r)' % (self.__class__.__name__, self.name)
 
+    def dereference(self):
+        raise ValueError("Can't dereference type %s" % self)
+
     def get_pointer(self):
         if self._ptr_type is None:
             self._ptr_type = IrPointerType(self.types, self)
@@ -360,6 +363,11 @@ class IrType:
             self._const_type = IrConstType(self.types, self)
             self.types._add(self._const_type)
         return self._const_type
+
+    def get_array(self, num_elements):
+        type_ = IrArrayType(self, num_elements)
+        self.types._add(type_)
+        return type_
 
 class IrStruct(IrType):
     def __init__(self, types, name):
@@ -378,6 +386,9 @@ class IrPointerType(IrType):
     def __repr__(self):
         return '%s(other=%r)' % (self.__class__.__name__, self.other)
 
+    def dereference(self):
+        return self.other
+
 class IrConstType(IrType):
     def __init__(self, types, other):
         IrType.__init__(self, types, 'const %s' % other.name)
@@ -392,6 +403,13 @@ class IrField:
         self.type_ = type_
         self.name = name
 
+class IrArrayType(IrType):
+    def __init__(self, element_type, num_elements):
+        IrType.__init__(self, element_type.types,
+                        '%s[%i]' % (element_type.name, num_elements))
+        self.element_type = element_type
+        self.num_elements = num_elements
+
 ############################################################################
 # Repository of globals
 ############################################################################
@@ -403,6 +421,11 @@ class IrGlobals:
 
     def new_function(self, returntype, fnname, params):
         fn = IrFunction(returntype, fnname, params)
+        self.functions.append(fn)
+        return fn
+
+    def new_helper_function(self, returntype, fnname, params):
+        fn = IrCFG(returntype, fnname, params)
         self.functions.append(fn)
         return fn
 
@@ -427,7 +450,7 @@ class Cast(Expression):
         self.newtype = newtype
 
     def __repr__(self):
-        return 'Cast(expr=%r, newtype=%r)' % (self.code, self.newtype)
+        return 'Cast(expr=%r, newtype=%r)' % (self.expr, self.newtype)
 
     def to_c(self):
         return '(%s)%s' % (self.newtype.to_c(), self.expr.to_c())
@@ -595,15 +618,23 @@ class Dereference(Expression):
 
 class FieldDereference(Expression):
     def __init__(self, ptr, fieldname):
+        assert isinstance(ptr, Expression)
+        underlying_type = ptr.type_.dereference()
+        if fieldname not in underlying_type.fields:
+            raise KeyError('field %r not found in %s'
+                           % (fieldname, underlying_type))
+        field = underlying_type.fields[fieldname]
+        assert isinstance(field, IrField)
+        Expression.__init__(self, field.type_)
         self.ptr = ptr
-        self.fieldname = fieldname
+        self.field = field
 
     def __repr__(self):
-        return ('FieldDereference(ptr=%r, fieldname=%r)'
-                % (self.ptr, self.fieldname))
+        return ('FieldDereference(ptr=%r, field=%r)'
+                % (self.ptr, self.field))
 
     def to_c(self):
-        return '%s->%s' % (self.ptr.to_c(), self.fieldname)
+        return '%s->%s' % (self.ptr.to_c(), self.field.name)
 
 class ArrayLookup(Expression):
     def __init__(self, ptr, idx):
@@ -668,6 +699,7 @@ class Comparison(Expression):
 class Call(Expression):
     def __init__(self, fn, args):
         assert isinstance(fn, IrFunction)
+        Expression.__init__(self, fn.returntype)
         assert isinstance(args, (list, tuple))
         for arg in args:
             assert isinstance(arg, Expression)

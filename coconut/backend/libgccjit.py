@@ -22,7 +22,7 @@ import gccjit
 from coconut.ir import Comment, Assignment, Local, Call, FieldDereference, \
     IrType, IrPointerType, IrStruct, Conditional, Param, ConstInt, Return, \
     BinaryExpr, IrConstType, IrFunction, ConstString, Comparison, Eval, \
-    Jump, Whitespace, Global, AddressOf, Dereference
+    Jump, Whitespace, Global, AddressOf, Dereference, IrArrayType, Cast
 
 class GccJitBackend:
     def __init__(self, types, globals_):
@@ -83,6 +83,10 @@ class GccJitBackend:
             return self.typedict[irtype.other].get_const()
         elif isinstance(irtype, IrStruct):
             return self.ctxt.new_struct(irtype.name.encode())
+        elif isinstance(irtype, IrArrayType):
+            return self.ctxt.new_array_type(
+                self.typedict[irtype.element_type],
+                irtype.num_elements)
         elif isinstance(irtype, IrType):
             if irtype.name == 'void':
                 return self.ctxt.get_type(gccjit.TypeKind.VOID)
@@ -151,7 +155,10 @@ class GccJitBackend:
                 elif isinstance(op, Jump):
                     gblock.end_with_jump(blockdict[op.dest_block])
                 elif isinstance(op, Return):
-                    gblock.end_with_return(self.make_rvalue(op.expr))
+                    if op.expr is None:
+                        gblock.end_with_void_return()
+                    else:
+                        gblock.end_with_return(self.make_rvalue(op.expr))
                 else:
                     raise NotImplementedError(op)
 
@@ -163,7 +170,7 @@ class GccJitBackend:
         elif isinstance(expr, FieldDereference):
             rvalue = self.make_rvalue(expr.ptr)
             assert isinstance(expr.ptr.type_, IrPointerType)
-            irfield = expr.ptr.type_.other.fields[expr.fieldname]
+            irfield = expr.ptr.type_.other.fields[expr.field.name]
             gfield = self.fielddict[irfield]
             return self.make_rvalue(expr.ptr).dereference_field(gfield)
         elif isinstance(expr, Global):
@@ -183,6 +190,9 @@ class GccJitBackend:
             args = [self.make_rvalue(arg)
                     for arg in expr.args]
             return self.ctxt.new_call(func, args)
+        elif isinstance(expr, Cast):
+            return self.ctxt.new_cast(self.make_rvalue(expr.expr),
+                                      self.typedict[expr.newtype])
         elif isinstance(expr, AddressOf):
             return self.make_lvalue(expr.lvalue).get_address()
         elif isinstance(expr, BinaryExpr):
@@ -216,7 +226,7 @@ class GccJitBackend:
         elif isinstance(expr, FieldDereference):
             rvalue = self.make_rvalue(expr.ptr)
             assert isinstance(expr.ptr.type_, IrPointerType)
-            irfield = expr.ptr.type_.other.fields[expr.fieldname]
+            irfield = expr.ptr.type_.other.fields[expr.field.name]
             gfield = self.fielddict[irfield]
             return self.make_rvalue(expr.ptr).dereference_field(gfield)
         elif isinstance(expr, Global):
