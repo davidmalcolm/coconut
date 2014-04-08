@@ -489,13 +489,15 @@ class Globals(IrGlobals):
         self.fnname = fn
         return fn
 
-class Compiler:
+class Config:
     def __init__(self):
-        # Config
         self.support_tracing = False
         self.dump_stack_activity = False
         self.verify = True
 
+class Compiler:
+    def __init__(self):
+        self.config = Config()
         self.types = Types()
         self.globals_ = Globals(self.types)
         self.f = Param(self.types.PyFrameObjectPtr, 'f')
@@ -693,7 +695,7 @@ class Compiler:
             for op in block.ops:
                 self.compile_bytecode(co, bcfg, op)
 
-        if self.verify:
+        if self.config.verify:
             self.ircfg.verify()
 
     def get_bytecode_label(self, offset):
@@ -719,7 +721,7 @@ class Compiler:
                                    % op.vheight)
         self.curcblock.add_comment('bstack: %s' % op.bstack)
 
-        if self.dump_stack_activity:
+        if self.config.dump_stack_activity:
             if op.vheight:
                 # Try to improve readability of generated sources by
                 # inserting a dummy function call, documenting in its args
@@ -746,7 +748,7 @@ class Compiler:
         # trace only at these locations:
         # Note that this doesn't support modifications to
         # f->f_stacktop or f->f_lasti
-        if self.support_tracing and op.addr in bcfg.linestarts:
+        if self.config.support_tracing and op.addr in bcfg.linestarts:
             linenum = bcfg.linestarts[op.addr]
             # FIXME: ceval.c's _Py_TracingPossible needs to be made extern for this
             # to work:
