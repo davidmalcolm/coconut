@@ -43,7 +43,7 @@ from coconut.ir import IrCFG, IrBlock, Expression, Local, Const, ConstInt, \
     ConstString,  NULL, Call, Local, Global, Assignment, LValue, \
     FieldDereference, ArrayLookup, Cast, AddressOf, \
     IrTypes, IrGlobals, IrType, IrStruct, IrField, IrFunction, \
-    Param, Comparison
+    Param, Comparison, BinaryExpr, Dereference
 from coconut.dot import dot_to_png, dot_to_svg
 from coconut.optimize import expr_for_python_obj
 
@@ -676,17 +676,20 @@ class OpcodeContext:
     def add_local(self, type_, name, init=None):
         return self.curcblock.add_local(type_, name, init)
 
+    def add_eval(self, expr):
+        self.curcblock.add_eval(expr)
+
     def assign(self, lhs, rhs):
         self.curcblock.add_assignment(lhs, rhs)
 
     def Py_INCREF(self, arg):
-        self.curcblock.add_call(None, self.globals_.Py_INCREF, (arg,))
+        self.curcblock.add_eval(self.globals_.Py_INCREF(arg))
 
     def Py_DECREF(self, arg):
-        self.curcblock.add_call(None, self.globals_.Py_DECREF, (arg,))
+        self.curcblock.add_eval(self.globals_.Py_DECREF(arg))
 
     def Py_XDECREF(self, arg):
-        self.curcblock.add_call(None, self.globals_.Py_XDECREF, (arg,))
+        self.curcblock.add_eval(self.globals_.Py_XDECREF(arg))
 
     def add_stack_comment(self, op, oldvheight, newvheight):
         if 1:

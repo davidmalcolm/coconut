@@ -22,7 +22,7 @@ import gccjit
 from coconut.ir import Comment, Assignment, Local, Call, FieldDereference, \
     IrType, IrPointerType, IrStruct, Conditional, Param, ConstInt, Return, \
     BinaryExpr, IrConstType, IrFunction, ConstString, Comparison, Eval, \
-    Jump, Whitespace, Global, AddressOf
+    Jump, Whitespace, Global, AddressOf, Dereference
 
 class GccJitBackend:
     def __init__(self, types, globals_):
@@ -158,6 +158,8 @@ class GccJitBackend:
     def make_lvalue(self, expr):
         if isinstance(expr, Local):
             return self.locals[expr]
+        elif isinstance(expr, Dereference):
+            return self.make_rvalue(expr.ptr).dereference()
         elif isinstance(expr, FieldDereference):
             rvalue = self.make_rvalue(expr.ptr)
             assert isinstance(expr.ptr.type_, IrPointerType)
@@ -172,6 +174,8 @@ class GccJitBackend:
     def make_rvalue(self, expr):
         if isinstance(expr, Local):
             return self.locals[expr]
+        elif isinstance(expr, Dereference):
+            return self.make_rvalue(expr.ptr).dereference()
         elif isinstance(expr, Param):
             return self.params[expr]
         elif isinstance(expr, Call):

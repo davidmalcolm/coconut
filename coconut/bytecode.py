@@ -878,13 +878,13 @@ class LOAD_FAST(BytecodeOp):
         true_ctxt.Py_INCREF(x)
         true_ctxt.PUSH(x)
         true_ctxt.FAST_DISPATCH()
-        false_ctxt.add_call(None,
-                            ctxt.globals_.format_exc_check_arg,
-                            (Global(ctxt.types.PyObjectPtr, 'PyExc_UnboundLocalError'),
-                             ConstString(UNBOUNDLOCAL_ERROR_MSG),
-                             Call(ctxt.globals_.PyTuple_GetItem,
-                                  (FieldDereference(co, 'co_varnames'),
-                                   ConstInt(ctxt.types.int, self.arg)))))
+        false_ctxt.add_eval(
+            ctxt.globals_.format_exc_check_arg(
+                Global(ctxt.types.PyObjectPtr, 'PyExc_UnboundLocalError'),
+                ConstString(UNBOUNDLOCAL_ERROR_MSG),
+                ctxt.globals_.PyTuple_GetItem(
+                    FieldDereference(co, 'co_varnames'),
+                    ConstInt(ctxt.types.int, self.arg))))
         false_ctxt.break_to_on_error()
 
 class LOAD_CONST(BytecodeOp):

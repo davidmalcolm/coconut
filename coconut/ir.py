@@ -48,6 +48,9 @@ class IrFunction:
     def __repr__(self):
         return '%s(fnname=%r)' % (self.__class__.__name__, self.fnname)
 
+    def __call__(self, *args):
+        return Call(self, args)
+
 class IrCFG(CFG, IrFunction):
     def __init__(self, returntype, fnname, params):
         CFG.__init__(self)
@@ -260,6 +263,9 @@ class IrBlock(Block):
         self.ops.append(call)
         return call
 
+    def add_eval(self, expr):
+        self.ops.append(Eval(expr))
+
     def add_jump(self, dest_block):
         assert isinstance(dest_block, IrBlock)
         self.ops.append(Jump(dest_block))
@@ -267,6 +273,9 @@ class IrBlock(Block):
 
     def add_return(self, expr):
         self.ops.append(Return(expr))
+
+    def add_void_return(self):
+        self.ops.append(Return(None))
 
     def is_empty(self):
         #print('is_empty(%r)' % self.addr)
@@ -574,6 +583,16 @@ class NULL(ConstInt):
     def to_c(self):
         return 'NULL'
 
+class Dereference(Expression):
+    def __init__(self, ptr):
+        self.ptr = ptr
+
+    def __repr__(self):
+        return 'Dereference(ptr=%r)' % self.ptr
+
+    def to_c(self):
+        return '*%s' % self.ptr.to_c()
+
 class FieldDereference(Expression):
     def __init__(self, ptr, fieldname):
         self.ptr = ptr
@@ -649,7 +668,7 @@ class Comparison(Expression):
 class Call(Expression):
     def __init__(self, fn, args):
         assert isinstance(fn, IrFunction)
-        assert isinstance(args, tuple)
+        assert isinstance(args, (list, tuple))
         for arg in args:
             assert isinstance(arg, Expression)
         self.fn = fn
