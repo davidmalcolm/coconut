@@ -25,3 +25,8 @@ injected into a JIT library.
 Caveats:
   * under development: lots of FIXMEs in the code
   * generators aren't yet supported
+
+Actually running the built code is a work-in-progress.  The approach
+I'm currently following involves a small patch to CPython, see
+`cpython.patch` within the coconut source tree.  Approaches that don't
+require patching CPython are probably preferable.

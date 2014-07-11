@@ -1,0 +1,162 @@
+diff --git a/Include/ceval.h b/Include/ceval.h
+--- a/Include/ceval.h
++++ b/Include/ceval.h
+@@ -198,6 +198,7 @@
+ PyAPI_FUNC(void) _PyEval_SignalAsyncExc(void);
+ #endif
+ 
++PyAPI_FUNC(void) PyEval_ErrArgs(PyObject *func, int flags, int nargs);
+ 
+ #ifdef __cplusplus
+ }
+diff --git a/Include/code.h b/Include/code.h
+--- a/Include/code.h
++++ b/Include/code.h
+@@ -7,6 +7,9 @@
+ extern "C" {
+ #endif
+ 
++/* Effectively the same signature as PyEval_EvalFrameEx: */
++typedef PyObject * (*bytecodeevalfunc)(struct _frame *, int);
++
+ /* Bytecode object */
+ typedef struct {
+     PyObject_HEAD
+@@ -30,6 +33,12 @@
+ 				   Objects/lnotab_notes.txt for details. */
+     void *co_zombieframe;     /* for optimization only (see frameobject.c) */
+     PyObject *co_weakreflist;   /* to support weakrefs to code objects */
++
++    /* Changes by me: */
++    /* Non-NULL; normally PyEval_EvalFrameEx but can be a specialized
++       implementation: */
++    bytecodeevalfunc co_evalframe;
++
+ } PyCodeObject;
+ 
+ /* Masks for co_flags above */
+diff --git a/Objects/codeobject.c b/Objects/codeobject.c
+--- a/Objects/codeobject.c
++++ b/Objects/codeobject.c
+@@ -147,6 +147,7 @@
+     co->co_lnotab = lnotab;
+     co->co_zombieframe = NULL;
+     co->co_weakreflist = NULL;
++    co->co_evalframe = PyEval_EvalFrameEx;
+     return co;
+ }
+ 
+@@ -216,6 +217,8 @@
+     {"co_name",         T_OBJECT,       OFF(co_name),           READONLY},
+     {"co_firstlineno", T_INT,           OFF(co_firstlineno),    READONLY},
+     {"co_lnotab",       T_OBJECT,       OFF(co_lnotab),         READONLY},
++    /* FIXME: this is actually a pointer: */
++    {"co_evalframe",    T_LONG,         OFF(co_evalframe),      0},
+     {NULL}      /* Sentinel */
+ };
+ 
+diff --git a/Python/ceval.c b/Python/ceval.c
+--- a/Python/ceval.c
++++ b/Python/ceval.c
+@@ -125,7 +125,7 @@
+ #endif
+ static int call_trace(Py_tracefunc, PyObject *, PyFrameObject *,
+                       int, PyObject *);
+-static int call_trace_protected(Py_tracefunc, PyObject *,
++int call_trace_protected(Py_tracefunc, PyObject *,
+                                 PyFrameObject *, int, PyObject *);
+ static void call_exc_trace(Py_tracefunc, PyObject *, PyFrameObject *);
+ static int maybe_call_line_trace(Py_tracefunc, PyObject *,
+@@ -134,7 +134,7 @@
+ static PyObject * cmp_outcome(int, PyObject *, PyObject *);
+ static PyObject * import_from(PyObject *, PyObject *);
+ static int import_all_from(PyObject *, PyObject *);
+-static void format_exc_check_arg(PyObject *, const char *, PyObject *);
++extern void format_exc_check_arg(PyObject *, const char *, PyObject *);
+ static void format_exc_unbound(PyCodeObject *co, int oparg);
+ static PyObject * unicode_concatenate(PyObject *, PyObject *,
+                                       PyFrameObject *, unsigned char *);
+@@ -761,7 +761,8 @@
+    is 0, we know we don't have to check this thread's c_tracefunc.
+    This speeds up the if statement in PyEval_EvalFrameEx() after
+    fast_next_opcode*/
+-static int _Py_TracingPossible = 0;
++extern int _Py_TracingPossible;
++int _Py_TracingPossible = 0;
+ 
+ 
+ 
+@@ -784,7 +785,7 @@
+     /* This is for backward compatibility with extension modules that
+        used this API; core interpreter code should call
+        PyEval_EvalFrameEx() */
+-    return PyEval_EvalFrameEx(f, 0);
++    return f->f_code->co_evalframe(f, 0);
+ }
+ 
+ PyObject *
+@@ -3430,7 +3431,7 @@
+         return PyGen_New(f);
+     }
+ 
+-    retval = PyEval_EvalFrameEx(f,0);
++    retval = co->co_evalframe(f,0);
+ 
+ fail: /* Jump here from prelude on failure */
+ 
+@@ -3728,7 +3729,7 @@
+     }
+ }
+ 
+-static int
++int
+ call_trace_protected(Py_tracefunc func, PyObject *obj, PyFrameObject *frame,
+                      int what, PyObject *arg)
+ {
+@@ -3970,8 +3971,8 @@
+         return " object";
+ }
+ 
+-static void
+-err_args(PyObject *func, int flags, int nargs)
++void
++PyEval_ErrArgs(PyObject *func, int flags, int nargs)
+ {
+     if (flags & METH_NOARGS)
+         PyErr_Format(PyExc_TypeError,
+@@ -4051,7 +4052,7 @@
+                 Py_DECREF(arg);
+             }
+             else {
+-                err_args(func, flags, na);
++                PyEval_ErrArgs(func, flags, na);
+                 x = NULL;
+             }
+         }
+@@ -4089,7 +4090,7 @@
+ 
+     /* Clear the stack of the function object.  Also removes
+        the arguments in case they weren't consumed already
+-       (fast_function() and err_args() leave them on the stack).
++       (fast_function() and PyEval_ErrArgs() leave them on the stack).
+      */
+     while ((*pp_stack) > pfunc) {
+         w = EXT_POP(*pp_stack);
+@@ -4147,7 +4148,7 @@
+             Py_INCREF(*stack);
+             fastlocals[i] = *stack++;
+         }
+-        retval = PyEval_EvalFrameEx(f,0);
++        retval = co->co_evalframe(f,0);
+         ++tstate->recursion_depth;
+         Py_DECREF(f);
+         --tstate->recursion_depth;
+@@ -4542,7 +4543,7 @@
+     return err;
+ }
+ 
+-static void
++void
+ format_exc_check_arg(PyObject *exc, const char *format_str, PyObject *obj)
+ {
+     const char *obj_str;

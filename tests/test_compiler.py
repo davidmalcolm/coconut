@@ -18,15 +18,33 @@
 import dis
 import unittest
 
+from coconut.backend.libgccjit import GccJitBackend
 from coconut.compiler import Compiler
 from coconut.dot import dot_to_png, dot_to_svg
 from coconut.ir import Assignment, Call, Jump, Eval
 
-def compile_(f):
+def compile_to_ircfg(f):
     # Get the IrCFG for function f
     c = Compiler()
     c.compile(f.__code__)
     return c.ircfg
+
+def to_gccjit(ircfg, types_, globals_):
+    import gccjit
+    backend = GccJitBackend(types_, globals_)
+    if 0:
+        backend.ctxt.set_bool_option(
+            gccjit.BoolOption.DUMP_INITIAL_GIMPLE, True)
+        backend.ctxt.set_bool_option(
+            gccjit.BoolOption.DUMP_GENERATED_CODE, True)
+        backend.ctxt.set_bool_option(
+            gccjit.BoolOption.DUMP_EVERYTHING, True)
+        backend.ctxt.set_bool_option(
+            gccjit.BoolOption.KEEP_INTERMEDIATES, True)
+        backend.ctxt.set_int_option(
+            gccjit.IntOption.OPTIMIZATION_LEVEL, 3)
+    result_fn = backend.compile(ircfg)
+    return result_fn
 
 class CompilationTests(unittest.TestCase):
     # tests of simple compilation (without optimization)
@@ -73,7 +91,10 @@ class CompilationTests(unittest.TestCase):
         self.assertEqual(f(), None)
 
         # Compile to IrCFG
-        ircfg = compile_(f)
+        c = Compiler()
+        c.compile(f.__code__)
+        ircfg = c.ircfg
+        #ircfg.view()
 
         # We should now have an entry block,
         # plus at least one block per bytecode op
@@ -164,10 +185,25 @@ class CompilationTests(unittest.TestCase):
         self.assertIn('offset 0: LOAD_CONST (None)', csrc)
         self.assertIn('offset 3: RETURN_VALUE', csrc)
 
+        result = to_gccjit(c.globals_.get_helper_functions() + [ircfg],
+                           c.types, c.globals_)
+        result_fn = result.get_code(b'my_eval')
+        self.assertTrue(result_fn)
+
+        #self.assertHasAttr(f.__code__, 'co_evalframe')
+        #print(dir(f.__code__))
+        #print(hex(f.__code__.co_evalframe))
+
+        # Patch the function:
+        f.__code__.co_evalframe = result_fn
+
+        # Call the patched function
+        #self.assertEqual(f(), None)
+
     def test_hello_world(self):
         def f():
             return 'hello world'
-        ircfg = compile_(f)
+        ircfg = compile_to_ircfg(f)
         csrc = ircfg.to_c()
         # Ensure that constants get readable names:
         self.assertIn('const1_hello_world', csrc)
@@ -175,14 +211,14 @@ class CompilationTests(unittest.TestCase):
     def test_false(self):
         def f():
             return False
-        ircfg = compile_(f)
+        ircfg = compile_to_ircfg(f)
         csrc = ircfg.to_c()
         self.assertIn('const1_False = (PyObject *)&_Py_FalseStruct;', csrc)
 
     def test_true(self):
         def f():
             return True
-        ircfg = compile_(f)
+        ircfg = compile_to_ircfg(f)
         csrc = ircfg.to_c()
         self.assertIn('const1_True = (PyObject *)&_Py_TrueStruct;', csrc)
 
@@ -190,7 +226,7 @@ class CompilationTests(unittest.TestCase):
         def f(a, b):
             a, b = b, a
             return a, b
-        ircfg = compile_(f)
+        ircfg = compile_to_ircfg(f)
         csrc = ircfg.to_c()
         self.assertIn('ROT_TWO', csrc)
         self.assertIn('v = stack1;', csrc)
@@ -202,7 +238,7 @@ class CompilationTests(unittest.TestCase):
         def f(a, b, c):
             a, b, c = c, b, a
             return (a, b, c)
-        ircfg = compile_(f)
+        ircfg = compile_to_ircfg(f)
         csrc = ircfg.to_c()
         self.assertIn('ROT_THREE', csrc)
         self.assertIn('v = stack2;', csrc)
@@ -219,7 +255,7 @@ class CompilationTests(unittest.TestCase):
             self.assertEqual(f(3), 3)
             self.assertEqual(f(3.0), 3.0)
         verify()
-        ircfg = compile_(f)
+        ircfg = compile_to_ircfg(f)
         csrc = ircfg.to_c()
         self.assertIn('UNARY_POSITIVE', csrc)
         self.assertIn('x = PyNumber_Positive(v);', csrc)
@@ -227,7 +263,7 @@ class CompilationTests(unittest.TestCase):
     def test_BINARY_SUBTRACT(self):
         def f(a, b):
             return a - b
-        ircfg = compile_(f)
+        ircfg = compile_to_ircfg(f)
         csrc = ircfg.to_c()
         self.assertIn('BINARY_SUBTRACT', csrc)
         self.assertIn('x = PyNumber_Subtract(v, w);', csrc)
@@ -235,7 +271,7 @@ class CompilationTests(unittest.TestCase):
     def test_BINARY_POWER(self):
         def f(a, b):
             return a ** b
-        ircfg = compile_(f)
+        ircfg = compile_to_ircfg(f)
         csrc = ircfg.to_c()
         self.assertIn('BINARY_POWER', csrc)
         self.assertIn('x = PyNumber_Power(v, w, &_Py_NoneStruct);', csrc)
@@ -243,7 +279,7 @@ class CompilationTests(unittest.TestCase):
     def test_BINARY_MULTIPLY(self):
         def f(a, b):
             return a * b
-        ircfg = compile_(f)
+        ircfg = compile_to_ircfg(f)
         csrc = ircfg.to_c()
         self.assertIn('BINARY_MULTIPLY', csrc)
         self.assertIn('x = PyNumber_Multiply(v, w);', csrc)
@@ -252,7 +288,7 @@ class CompilationTests(unittest.TestCase):
         def f(a, b):
             a *= b
             return a
-        ircfg = compile_(f)
+        ircfg = compile_to_ircfg(f)
         csrc = ircfg.to_c()
         self.assertIn('INPLACE_MULTIPLY', csrc)
         self.assertIn('x = PyNumber_InPlaceMultiply(v, w);', csrc)
@@ -261,7 +297,7 @@ class CompilationTests(unittest.TestCase):
         def f(a, b):
             a **= b
             return a
-        ircfg = compile_(f)
+        ircfg = compile_to_ircfg(f)
         csrc = ircfg.to_c()
         self.assertIn('INPLACE_POWER', csrc)
         self.assertIn('x = PyNumber_InPlacePower(v, w, &_Py_NoneStruct);', csrc)
@@ -269,7 +305,7 @@ class CompilationTests(unittest.TestCase):
     def test_BUILD_MAP(self):
         def f(a, b):
             return {a: b}
-        ircfg = compile_(f)
+        ircfg = compile_to_ircfg(f)
         csrc = ircfg.to_c()
         self.assertIn('BUILD_MAP', csrc)
         self.assertIn('x = _PyDict_NewPresized(1);', csrc)
@@ -280,14 +316,14 @@ class CompilationTests(unittest.TestCase):
         def f(seq):
             a, b, c = seq
             return 'a: %r, b: %r, c: %r' % (a, b, c)
-        ircfg = compile_(f)
+        ircfg = compile_to_ircfg(f)
         csrc = ircfg.to_c()
         self.assertIn('UNPACK_SEQUENCE', csrc)
 
     def test_STORE_SUBSCR(self):
         def f(a, b, c):
             a[b] = c
-        ircfg = compile_(f)
+        ircfg = compile_to_ircfg(f)
         csrc = ircfg.to_c()
         self.assertIn('STORE_SUBSCR', csrc)
         self.assertIn('err = PyObject_SetItem(v, w, u);', csrc)
@@ -296,7 +332,7 @@ class CompilationTests(unittest.TestCase):
         def f():
             a = [1, 2, 3]
             return a[:]
-        ircfg = compile_(f)
+        ircfg = compile_to_ircfg(f)
         csrc = ircfg.to_c()
         self.assertIn('BUILD_SLICE', csrc)
 
@@ -305,7 +341,7 @@ class CompilationTests(unittest.TestCase):
             for i in range(1000):
                 pass
             return i
-        ircfg = compile_(f)
+        ircfg = compile_to_ircfg(f)
         csrc = ircfg.to_c()
         self.assertIn('SETUP_LOOP', csrc)
         self.assertIn('FOR_ITER', csrc)
@@ -316,7 +352,7 @@ class CompilationTests(unittest.TestCase):
             for i in range(1000):
                 break
             return i
-        ircfg = compile_(f)
+        ircfg = compile_to_ircfg(f)
         csrc = ircfg.to_c()
         self.assertIn('BREAK_LOOP', csrc)
 
@@ -325,7 +361,7 @@ class CompilationTests(unittest.TestCase):
             yield 42
         with self.assertRaises(NotImplementedError,
                                msg="Generators aren't yet supported"):
-            ircfg = compile_(f)
+            ircfg = compile_to_ircfg(f)
 
 def sample_bytecode_func(a, b, c):
     return 'a: %r, b: %r, c: %r' % (a, b, c)
@@ -343,7 +379,7 @@ class TestCallFunction(unittest.TestCase):
             # bad call to "abs" which takes one arg: it's a PyCFunction with
             # METH_O, hence this should trigger an exception in that path:
             return abs()
-        ircfg = compile_(f)
+        ircfg = compile_to_ircfg(f)
         csrc = ircfg.to_c()
         self.assertIn('CALL_FUNCTION', csrc)
         self.assertIn('impl_CALL_FUNCTION_na0_nk0', csrc)
@@ -355,7 +391,7 @@ class TestCallFunction(unittest.TestCase):
             # "str" is a type, so this call will go through the generic
             # do_call() path, using PyObject_Call:
             return str(a)
-        ircfg = compile_(f)
+        ircfg = compile_to_ircfg(f)
         csrc = ircfg.to_c()
         self.assertIn('CALL_FUNCTION', csrc)
         self.assertIn('impl_CALL_FUNCTION_na1_nk0', csrc)
@@ -366,7 +402,7 @@ class TestCallFunction(unittest.TestCase):
             # and hence the call goes through the METH_O path
             # within the generated impl_CALL_FUNCTION_
             return abs(a)
-        ircfg = compile_(f)
+        ircfg = compile_to_ircfg(f)
         csrc = ircfg.to_c()
         self.assertIn('CALL_FUNCTION', csrc)
         self.assertIn('impl_CALL_FUNCTION_na1_nk0', csrc)
@@ -380,7 +416,7 @@ class TestCallFunction(unittest.TestCase):
             # This exercises the PyCFunction support within the
             # generated impl_CALL_FUNCTION_
             return max(a, b)
-        ircfg = compile_(f)
+        ircfg = compile_to_ircfg(f)
         csrc = ircfg.to_c()
         self.assertIn('CALL_FUNCTION', csrc)
         self.assertIn('impl_CALL_FUNCTION_na2_nk0', csrc)
@@ -392,7 +428,7 @@ class TestCallFunction(unittest.TestCase):
             # this exercises the fast_function support within
             # the generated impl_CALL_FUNCTION_
             return sample_bytecode_func(a, b, c)
-        ircfg = compile_(f)
+        ircfg = compile_to_ircfg(f)
         csrc = ircfg.to_c()
         self.assertIn('CALL_FUNCTION', csrc)
         self.assertIn('impl_CALL_FUNCTION_na3_nk0', csrc)
@@ -404,7 +440,7 @@ class TestCallFunction(unittest.TestCase):
             return sample_bytecode_func_with_default(a, b)
         self.assertEqual(sample_bytecode_func_with_default.__defaults__,
                          (42, ))
-        ircfg = compile_(f)
+        ircfg = compile_to_ircfg(f)
         csrc = ircfg.to_c()
         self.assertIn('CALL_FUNCTION', csrc)
         self.assertIn('impl_CALL_FUNCTION_na2_nk0', csrc)
@@ -417,7 +453,7 @@ class TestBuiltins(unittest.TestCase):
             c = 42
             return locals()
 
-        ircfg = compile_(f)
+        ircfg = compile_to_ircfg(f)
         csrc = ircfg.to_c()
         self.assertIn('CALL_FUNCTION', csrc)
         self.assertIn('impl_CALL_FUNCTION_na0_nk0', csrc)
@@ -427,7 +463,7 @@ class TestsOf_COMPARE_OP(unittest.TestCase):
     def test_eq(self):
         def f(a, b):
             return a == b
-        ircfg = compile_(f)
+        ircfg = compile_to_ircfg(f)
         csrc = ircfg.to_c()
         self.assertIn('x = PyObject_RichCompare(v, w, PyCmp_EQ);', csrc)
 
