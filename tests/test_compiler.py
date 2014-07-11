@@ -135,12 +135,13 @@ class CompilationTests(unittest.TestCase):
         self.assert_is_c(ops[2], 'co = f->f_code;\n')
         self.assert_is_c(ops[3], 'names = co->co_names;\n')
         self.assert_is_c(ops[4], 'consts = co->co_consts;\n')
-        self.assert_is_c(ops[5], 'err = 0;\n')
-        self.assert_is_c(ops[6], 'x = &_Py_NoneStruct;\n')
-        self.assert_is_c(ops[7], 'w = NULL;\n')
-        self.assert_is_c(ops[8], 'const0_None = &_Py_NoneStruct;\n')
-        self.assert_is_jump(ops[9], b_LOAD_CONST)
-        self.assert_is_c(ops[9], 'goto bytecode_offset_0_LOAD_CONST;\n')
+        self.assert_is_c(ops[5], 'f->f_stacktop = NULL;\n')
+        self.assert_is_c(ops[6], 'err = 0;\n')
+        self.assert_is_c(ops[7], 'x = &_Py_NoneStruct;\n')
+        self.assert_is_c(ops[8], 'w = NULL;\n')
+        self.assert_is_c(ops[9], 'const0_None = &_Py_NoneStruct;\n')
+        self.assert_is_jump(ops[10], b_LOAD_CONST)
+        self.assert_is_c(ops[10], 'goto bytecode_offset_0_LOAD_CONST;\n')
 
         # Verify how a LOAD_CONST of None gets unrolled to IR ops,
         # with stack push/pop unrolled to manipulation of locals
@@ -171,12 +172,13 @@ class CompilationTests(unittest.TestCase):
         self.assertEqual(len(b_RETURN_VALUE.pred_edges), 1)
         self.assertEqual(len(b_RETURN_VALUE.succ_edges), 0)
         ops = b_RETURN_VALUE.get_real_ops()
-        self.assertEqual(len(ops), 4)
+        self.assertEqual(len(ops), 5)
         self.assert_is_c(ops[0], 'f->f_lasti = 3;\n')
         self.assert_is_assignment_between_locals(
             ops[1],
             typename='PyObject *', lhsname='retval', rhsname='stack0')
         self.assert_is_c(ops[2], '(void)Py_LeaveRecursiveCall();\n')
+        self.assert_is_c(ops[3], 'tstate->frame = f->f_back;\n')
         self.assertEqual(ops[-1].to_c(),
                          'return retval;\n')
 
@@ -198,7 +200,7 @@ class CompilationTests(unittest.TestCase):
         f.__code__.co_evalframe = result_fn
 
         # Call the patched function
-        #self.assertEqual(f(), None)
+        self.assertEqual(f(), None)
 
     def test_hello_world(self):
         def f():

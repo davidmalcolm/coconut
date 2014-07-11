@@ -635,6 +635,11 @@ class Compiler:
         self.curcblock.add_assignment(self.names, FieldDereference(self.co, 'co_names'))
         self.curcblock.add_assignment(self.consts, FieldDereference(self.co, 'co_consts'))
 
+        # f->f_stacktop = NULL;
+        self.curcblock.add_assignment(
+            FieldDereference(self.f, 'f_stacktop'),
+            NULL(self.types.PyObjectPtrPtr))
+
         self.curcblock.add_assignment(self.err, ConstInt(self.types.int, 0))
         self.curcblock.add_assignment(self.x,
                                       self.globals_.Py_None) # Not a reference, just anything non-NULL
@@ -1245,6 +1250,13 @@ class OpcodeContext:
 
     def exit_eval_frame(self):
         self.writeln('exit_eval_frame:')
+
+        # "Py_LeaveRecursiveCall();"
         self.add_call(None, self.globals_.Py_LeaveRecursiveCall, ())
-        #self.assign(LValue('tstate->frame'), Expression('f->f_back'))
+
+        # "tstate->frame = f->f_back;"
+        self.curcblock.add_assignment(
+            FieldDereference(self.compiler.tstate, 'frame'),
+            FieldDereference(self.compiler.f, 'f_back'))
+
         self.add_return(self.compiler.retval)
