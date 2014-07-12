@@ -444,8 +444,8 @@ class Globals(IrGlobals):
                                   '*',
                                   BinaryExpr(self.types.int,
                                              self._Py_CheckRecursionLimit,
-                                             '>>',
-                                             ConstInt(self.types.int, 2)))))
+                                             '/',
+                                             ConstInt(self.types.int, 4)))))
 
     def _make_Py_EnterRecursiveCall(self):
         #  #define Py_EnterRecursiveCall(where)  \

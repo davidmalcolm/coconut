@@ -200,7 +200,8 @@ class GccJitBackend:
             opdict = {'+':gccjit.BinaryOp.PLUS,
                       '-':gccjit.BinaryOp.MINUS,
                       '*':gccjit.BinaryOp.MULT,
-                      '/':gccjit.BinaryOp.DIVIDE}
+                      '/':gccjit.BinaryOp.DIVIDE,
+                      '&&':gccjit.BinaryOp.LOGICAL_AND}
             return self.ctxt.new_binary_op(opdict[expr.expr],
                                            self.typedict[expr.type_],
                                            self.make_rvalue(expr.lhs),

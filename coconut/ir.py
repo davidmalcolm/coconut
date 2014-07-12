@@ -666,7 +666,7 @@ class BinaryExpr(Expression):
     def __init__(self, type_, lhs, expr, rhs):
         assert isinstance(type_, IrType)
         assert isinstance(lhs, Expression)
-        assert expr in ('+', '-', '*', '/') # for now
+        assert expr in ('+', '-', '*', '/', '&&') # for now
         assert isinstance(rhs, Expression)
         self.type_ = type_
         self.lhs = lhs
