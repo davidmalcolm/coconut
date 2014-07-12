@@ -38,7 +38,7 @@ def to_gccjit(irprogram):
 
     backend = GccJitBackend(types_, globals_)
 
-    if 1:
+    if 0:
         backend.ctxt.set_bool_option(
             gccjit.BoolOption.DUMP_INITIAL_GIMPLE, True)
         backend.ctxt.set_bool_option(
