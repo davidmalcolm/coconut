@@ -22,7 +22,8 @@ import gccjit
 from coconut.ir import Comment, Assignment, Local, Call, FieldDereference, \
     IrType, IrPointerType, IrStruct, Conditional, Param, ConstInt, Return, \
     BinaryExpr, IrConstType, IrFunction, ConstString, Comparison, Eval, \
-    Jump, Whitespace, Global, AddressOf, Dereference, IrArrayType, Cast
+    Jump, Whitespace, Global, AddressOf, Dereference, IrArrayType, Cast, \
+    ArrayLookup
 
 class GccJitBackend:
     def __init__(self, types, globals_):
@@ -232,6 +233,9 @@ class GccJitBackend:
         elif isinstance(expr, Global):
             return self.ctxt.new_global(self.typedict[expr.type_],
                                         expr.name.encode())
+        elif isinstance(expr, ArrayLookup):
+            return self.ctxt.new_array_access(self.make_rvalue(expr.ptr),
+                                              self.make_rvalue(expr.idx))
         raise NotImplementedError(expr)
 
     def make_function(self, fnname):

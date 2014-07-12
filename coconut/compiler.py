@@ -117,6 +117,9 @@ class Types(IrTypes):
         self.PyFrameObject = self.new_struct('PyFrameObject')
         self.PyFrameObjectPtr = self.PyFrameObject.get_pointer()
 
+        self.PyTupleObject = self.new_struct('PyTupleObject')
+        self.PyTupleObjectPtr = self.PyTupleObject.get_pointer()
+
         self.PyLongObject = self.new_struct('PyLongObject')
         self.PyLongObjectPtr = self.PyLongObject.get_pointer()
 
@@ -198,6 +201,13 @@ class Types(IrTypes):
                 (self.int,              'f_iblock'),
                 (self.PyTryBlock.get_array(CO_MAXBLOCKS), 'f_blockstack'),
                 (self.PyObjectPtrArray, 'f_localsplus'),
+            ]
+        )
+
+        self.PyTupleObject.setup_fields(
+            PyObject_VAR_HEAD +
+            [
+                (self.PyObjectPtrArray, 'ob_item'),
             ]
         )
 
@@ -346,11 +356,28 @@ class Globals(IrGlobals):
                 if isinstance(fn, IrCFG)]
 
     def make_helper_functions(self):
+        self._make_PyTuple_GET_ITEM()
         self._make_Py_INCREF()
         self._make__Py_MakeRecCheck()
         self._make__Py_MakeEndRecCheck()
         self._make_Py_EnterRecursiveCall()
         self._make_Py_LeaveRecursiveCall()
+
+    def _make_PyTuple_GET_ITEM(self):
+        """
+        #define PyTuple_GET_ITEM(op, i) (((PyTupleObject *)(op))->ob_item[i])
+        """
+        obj = Param(self.types.PyObjectPtr, 'obj')
+        idx = Param(self.types.Py_ssize_t, 'idx')
+        self.PyTuple_GET_ITEM = self.new_helper_function(
+            self.types.PyObjectPtr, 'PyTuple_GET_ITEM', [obj, idx])
+        b_entry = self.PyTuple_GET_ITEM.add_block('entry')
+        b_entry.add_return(
+            ArrayLookup(
+                FieldDereference(Cast(obj, self.types.PyTupleObjectPtr),
+                                 'ob_item'),
+                idx)
+            )
 
     def _make_Py_INCREF(self):
         obj = Param(self.types.PyObjectPtr, 'obj')
