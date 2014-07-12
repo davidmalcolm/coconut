@@ -23,16 +23,22 @@ from coconut.compiler import Compiler
 from coconut.dot import dot_to_png, dot_to_svg
 from coconut.ir import Assignment, Call, Jump, Eval
 
-def compile_to_ircfg(f):
-    # Get the IrCFG for function f
-    c = Compiler()
-    c.compile(f.__code__)
-    return c.ircfg
+class IrProgram:
+    def __init__(self, pyfun):
+        self.pyfun = pyfun
+        self.c = Compiler()
+        self.c.compile(pyfun.__code__)
+        self.ircfg = self.c.ircfg
 
-def to_gccjit(ircfg, types_, globals_):
+def to_gccjit(irprogram):
     import gccjit
+    ircfg = irprogram.c.globals_.get_helper_functions() + [irprogram.c.ircfg]
+    types_ = irprogram.c.types
+    globals_ = irprogram.c.globals_
+
     backend = GccJitBackend(types_, globals_)
-    if 0:
+
+    if 1:
         backend.ctxt.set_bool_option(
             gccjit.BoolOption.DUMP_INITIAL_GIMPLE, True)
         backend.ctxt.set_bool_option(
@@ -41,10 +47,23 @@ def to_gccjit(ircfg, types_, globals_):
             gccjit.BoolOption.DUMP_EVERYTHING, True)
         backend.ctxt.set_bool_option(
             gccjit.BoolOption.KEEP_INTERMEDIATES, True)
+        backend.ctxt.set_bool_option(
+            gccjit.BoolOption.DEBUGINFO, True)
         backend.ctxt.set_int_option(
             gccjit.IntOption.OPTIMIZATION_LEVEL, 3)
     result_fn = backend.compile(ircfg)
     return result_fn
+
+def patch(pyfun, irp):
+    result = to_gccjit(irp)
+    result_fn = result.get_code(b'my_eval')
+    assert result_fn
+    pyfun.__code__.co_evalframe = result_fn
+
+def compile_to_ircfg(f):
+    # Get the IrCFG for function f
+    c = IrProgram(f)
+    return c.ircfg
 
 class CompilationTests(unittest.TestCase):
     # tests of simple compilation (without optimization)
@@ -91,9 +110,8 @@ class CompilationTests(unittest.TestCase):
         self.assertEqual(f(), None)
 
         # Compile to IrCFG
-        c = Compiler()
-        c.compile(f.__code__)
-        ircfg = c.ircfg
+        irp = IrProgram(f)
+        ircfg = irp.ircfg
         #ircfg.view()
 
         # We should now have an entry block,
@@ -183,12 +201,13 @@ class CompilationTests(unittest.TestCase):
                          'return retval;\n')
 
         csrc = ircfg.to_c()
+        if 0:
+            print(csrc)
         # The generated source ought to embed bytecode in comments:
         self.assertIn('offset 0: LOAD_CONST (None)', csrc)
         self.assertIn('offset 3: RETURN_VALUE', csrc)
 
-        result = to_gccjit(c.globals_.get_helper_functions() + [ircfg],
-                           c.types, c.globals_)
+        result = to_gccjit(irp)
         result_fn = result.get_code(b'my_eval')
         self.assertTrue(result_fn)
 
@@ -205,10 +224,12 @@ class CompilationTests(unittest.TestCase):
     def test_hello_world(self):
         def f():
             return 'hello world'
-        ircfg = compile_to_ircfg(f)
-        csrc = ircfg.to_c()
+        irp = IrProgram(f)
+        csrc = irp.ircfg.to_c()
         # Ensure that constants get readable names:
         self.assertIn('const1_hello_world', csrc)
+        patch(f, irp)
+        self.assertEqual(f(), 'hello world')
 
     def test_false(self):
         def f():
