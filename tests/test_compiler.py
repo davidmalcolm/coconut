@@ -234,16 +234,20 @@ class CompilationTests(unittest.TestCase):
     def test_false(self):
         def f():
             return False
-        ircfg = compile_to_ircfg(f)
-        csrc = ircfg.to_c()
+        irp = IrProgram(f)
+        csrc = irp.ircfg.to_c()
         self.assertIn('const1_False = (PyObject *)&_Py_FalseStruct;', csrc)
+        patch(f, irp)
+        self.assertEqual(f(), False)
 
     def test_true(self):
         def f():
             return True
-        ircfg = compile_to_ircfg(f)
-        csrc = ircfg.to_c()
+        irp = IrProgram(f)
+        csrc = irp.ircfg.to_c()
         self.assertIn('const1_True = (PyObject *)&_Py_TrueStruct;', csrc)
+        patch(f, irp)
+        self.assertEqual(f(), True)
 
     def test_ROT_TWO(self):
         def f(a, b):
