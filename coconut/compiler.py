@@ -319,13 +319,11 @@ class Globals(IrGlobals):
                           'PyNumber_TrueDivide',
                           'PyNumber_FloorDivide',
                           'PyNumber_Remainder',
-                          'PyNumber_Power',
                           'PyNumber_Lshift',
                           'PyNumber_Rshift',
                           'PyNumber_And',
                           'PyNumber_Xor',
                           'PyNumber_Or',
-                          'PyNumber_InPlacePower',
                           'PyNumber_InPlaceMultiply',
                           'PyNumber_InPlaceTrueDivide',
                           'PyNumber_InPlaceFloorDivide',
@@ -337,6 +335,13 @@ class Globals(IrGlobals):
                           'PyNumber_InPlaceAnd',
                           'PyNumber_InPlaceXor',
                           'PyNumber_InPlaceOr',]]
+
+        # Ternary ops:
+        + [(types.PyObjectPtr, fnname, [types.PyObjectPtr,
+                                        types.PyObjectPtr,
+                                        types.PyObjectPtr])
+           for fnname in ['PyNumber_Power',
+                          'PyNumber_InPlacePower',]]
         ) # end of GLOBAL_FUNCTIONS
 
         for returntype, fnname, params in GLOBAL_FUNCTIONS:

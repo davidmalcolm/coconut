@@ -322,8 +322,8 @@ class CompilationTests(unittest.TestCase):
         csrc = irp.ircfg.to_c()
         self.assertIn('BINARY_POWER', csrc)
         self.assertIn('x = PyNumber_Power(v, w, &_Py_NoneStruct);', csrc)
-        #patch(f, irp) # libgccjit.so: error: gcc_jit_context_new_call: too many arguments to function "PyNumber_Power" (got 3 args, expected 2)
-        #verify()
+        patch(f, irp)
+        verify()
 
     def test_BINARY_MULTIPLY(self):
         def f(a, b):
@@ -366,8 +366,8 @@ class CompilationTests(unittest.TestCase):
         csrc = irp.ircfg.to_c()
         self.assertIn('INPLACE_POWER', csrc)
         self.assertIn('x = PyNumber_InPlacePower(v, w, &_Py_NoneStruct);', csrc)
-        #patch(f, irp) # libgccjit.so: error: gcc_jit_context_new_call: too many arguments to function "PyNumber_InPlacePower" (got 3 args, expected 2)
-        #verify()
+        patch(f, irp)
+        verify()
 
     def test_BUILD_MAP(self):
         def f(a, b):
