@@ -301,6 +301,8 @@ class Globals(IrGlobals):
             (types.void, 'Py_INCREF', [Param(types.PyObjectPtr, 'x')]),
             (types.void, 'Py_DECREF', [Param(types.PyObjectPtr, 'x')]),
             (types.void, 'Py_XDECREF', [Param(types.PyObjectPtr, 'x')]),
+            (types.void, '_Py_Dealloc', [Param(types.PyObjectPtr, 'x')]),
+
         ]
 
         # Unary ops:
@@ -357,11 +359,18 @@ class Globals(IrGlobals):
 
     def make_helper_functions(self):
         self._make_PyTuple_GET_ITEM()
+        self._make_PyTuple_SET_ITEM()
         self._make_Py_INCREF()
+        self._make_Py_DECREF()
+        self._make_Py_XDECREF()
         self._make__Py_MakeRecCheck()
         self._make__Py_MakeEndRecCheck()
         self._make_Py_EnterRecursiveCall()
         self._make_Py_LeaveRecursiveCall()
+
+    # Some "macros":
+    def Py_TYPE(obj):
+        return FieldDereference(obj, 'ob_type')
 
     def _make_PyTuple_GET_ITEM(self):
         """
@@ -379,6 +388,24 @@ class Globals(IrGlobals):
                 idx)
             )
 
+    def _make_PyTuple_SET_ITEM(self):
+        """
+        #define PyTuple_SET_ITEM(op, i, v) (((PyTupleObject *)(op))->ob_item[i] = v)
+        """
+        obj = Param(self.types.PyObjectPtr, 'obj')
+        idx = Param(self.types.Py_ssize_t, 'idx')
+        val = Param(self.types.PyObjectPtr, 'val')
+        self.PyTuple_SET_ITEM = self.new_helper_function(
+            self.types.void, 'PyTuple_SET_ITEM', [obj, idx, val])
+        b_entry = self.PyTuple_SET_ITEM.add_block('entry')
+        b_entry.add_assignment(
+            ArrayLookup(
+                FieldDereference(Cast(obj, self.types.PyTupleObjectPtr),
+                                 'ob_item'),
+                idx),
+            val)
+        b_entry.add_return(None)
+
     def _make_Py_INCREF(self):
         obj = Param(self.types.PyObjectPtr, 'obj')
         self.Py_INCREF = self.new_helper_function(
@@ -392,6 +419,67 @@ class Globals(IrGlobals):
                 '+',
                 ConstInt(self.types.Py_ssize_t, 1)))
         b_entry.add_return(None)
+
+    def _make_Py_DECREF(self):
+        """
+        #define Py_DECREF(op)                                   \
+            do {                                                \
+                if (_Py_DEC_REFTOTAL  _Py_REF_DEBUG_COMMA       \
+                --((PyObject*)(op))->ob_refcnt != 0)            \
+                    _Py_CHECK_REFCNT(op)                        \
+                else                                            \
+                _Py_Dealloc((PyObject *)(op));                  \
+            } while (0)
+        #define _Py_Dealloc(op) (                               \
+            _Py_INC_TPFREES(op) _Py_COUNT_ALLOCS_COMMA          \
+            (*Py_TYPE(op)->tp_dealloc)((PyObject *)(op)))
+        #define Py_TYPE(ob) (((PyObject*)(ob))->ob_type)
+        """
+        obj = Param(self.types.PyObjectPtr, 'obj')
+        self.Py_DECREF = self.new_helper_function(
+            self.types.void, 'Py_DECREF', [obj])
+        b_entry = self.Py_DECREF.add_block('entry')
+
+        # obj->ob_refcnt--
+        b_entry.add_assignment(
+            FieldDereference(obj, 'ob_refcnt'),
+            BinaryExpr(
+                self.types.Py_ssize_t,
+                FieldDereference(obj, 'ob_refcnt'),
+                '-',
+                ConstInt(self.types.Py_ssize_t, 1)))
+
+        # if (obj->ob_refcnt == 0)
+        b_zero, b_nonzero = b_entry.add_conditional(
+            Comparison(
+                FieldDereference(obj, 'ob_refcnt'),
+                '==',
+                ConstInt(self.types.Py_ssize_t, 0)))
+
+        # FIXME: this should become a call through tp_dealloc, once
+        # libgccjit supports calling through a function pointer
+        b_zero.add_call(None, self._Py_Dealloc, (obj, ))
+        b_zero.add_return(None)
+
+        b_nonzero.add_return(None)
+
+    def _make_Py_XDECREF(self):
+        """
+        #define Py_XDECREF(op) do { if ((op) == NULL) ; else Py_DECREF(op); } while (0)
+        """
+        obj = Param(self.types.PyObjectPtr, 'obj')
+        self.Py_XDECREF = self.new_helper_function(
+            self.types.void, 'Py_XDECREF', [obj])
+        b_entry = self.Py_XDECREF.add_block('entry')
+        b_true, b_false = b_entry.add_conditional(
+            Comparison(obj,
+                       '==',
+                       NULL(self.types.PyObjectPtr)))
+
+        b_true.add_call(None, self.Py_DECREF, (obj, ))
+        b_true.add_return(None)
+
+        b_false.add_return(None)
 
     # These correspond to macros in ceval.h:
 
@@ -1045,7 +1133,7 @@ class OpcodeContext:
             true_ctxt, false_ctxt = \
                 ctxt.add_conditional(Call(ctxt.globals_.PyErr_Occurred, ()),
                                      '==',
-                                     ConstInt(ctxt.types.int, 0),
+                                     NULL(self.types.PyObjectPtr),
                                      true_label='PyErr_Occurred_false',
                                      false_label='PyErr_Occurred_true')
             true_ctxt.add_call(

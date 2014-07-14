@@ -700,8 +700,8 @@ class Comparison(Expression):
         return '%s %s %s' % (self.lhs.to_c(), self.expr, self.rhs.to_c())
 
     def __repr__(self):
-        return 'Comparison(type_=%r, lhs=%r, expr=%r, rhs=%r)' \
-            % (self.type_, self.lhs, self.expr, self.rhs)
+        return 'Comparison(lhs=%r, expr=%r, rhs=%r)' \
+            % (self.lhs, self.expr, self.rhs)
 
 class Call(Expression):
     def __init__(self, fn, args):

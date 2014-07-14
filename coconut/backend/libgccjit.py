@@ -115,6 +115,8 @@ class GccJitBackend:
             self.fndict[irfn] = self.create_fn_decl(irfn)
         for irfn in irfns:
             self.create_fn_body(irfn)
+        if 1:
+            self.ctxt.dump_to_file(b'/tmp/fake-eval.c', True)
         return self.ctxt.compile()
 
     def create_fn_decl(self, irfn):
@@ -181,6 +183,9 @@ class GccJitBackend:
         elif isinstance(expr, Global):
             return self.ctxt.new_global(self.typedict[expr.type_],
                                         expr.name.encode())
+        elif isinstance(expr, ArrayLookup):
+            return self.ctxt.new_array_access(self.make_rvalue(expr.ptr),
+                                              self.make_rvalue(expr.idx))
         raise NotImplementedError(expr)
 
     def make_rvalue(self, expr):

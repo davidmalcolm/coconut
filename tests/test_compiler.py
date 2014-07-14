@@ -253,20 +253,26 @@ class CompilationTests(unittest.TestCase):
         def f(a, b):
             a, b = b, a
             return a, b
-        ircfg = compile_to_ircfg(f)
-        csrc = ircfg.to_c()
+        def verify():
+            self.assertEqual(f(2, 3), (3, 2))
+        irp = IrProgram(f)
+        csrc = irp.ircfg.to_c()
         self.assertIn('ROT_TWO', csrc)
         self.assertIn('v = stack1;', csrc)
         self.assertIn('w = stack0;', csrc)
         self.assertIn('stack1 = w;', csrc)
         self.assertIn('stack0 = v;', csrc)
+        patch(f, irp)
+        verify()
 
     def test_ROT_THREE(self):
         def f(a, b, c):
             a, b, c = c, b, a
             return (a, b, c)
-        ircfg = compile_to_ircfg(f)
-        csrc = ircfg.to_c()
+        def verify():
+            self.assertEqual(f(5, 7, 9), (9, 7, 5))
+        irp = IrProgram(f)
+        csrc = irp.ircfg.to_c()
         self.assertIn('ROT_THREE', csrc)
         self.assertIn('v = stack2;', csrc)
         self.assertIn('w = stack1;', csrc)
@@ -274,6 +280,8 @@ class CompilationTests(unittest.TestCase):
         self.assertIn('stack2 = w;', csrc)
         self.assertIn('stack1 = x;', csrc)
         self.assertIn('stack0 = v;', csrc)
+        patch(f, irp)
+        verify()
 
     def test_UNARY_POSITIVE(self):
         def f(a):
@@ -282,113 +290,191 @@ class CompilationTests(unittest.TestCase):
             self.assertEqual(f(3), 3)
             self.assertEqual(f(3.0), 3.0)
         verify()
-        ircfg = compile_to_ircfg(f)
-        csrc = ircfg.to_c()
+        irp = IrProgram(f)
+        csrc = irp.ircfg.to_c()
         self.assertIn('UNARY_POSITIVE', csrc)
         self.assertIn('x = PyNumber_Positive(v);', csrc)
+        patch(f, irp)
+        verify()
 
     def test_BINARY_SUBTRACT(self):
         def f(a, b):
             return a - b
-        ircfg = compile_to_ircfg(f)
-        csrc = ircfg.to_c()
+        def verify():
+            self.assertEqual(f(5, 3), 2)
+            self.assertEqual(f(5.0, 3.0), 2.0)
+        verify()
+        irp = IrProgram(f)
+        csrc = irp.ircfg.to_c()
         self.assertIn('BINARY_SUBTRACT', csrc)
         self.assertIn('x = PyNumber_Subtract(v, w);', csrc)
+        patch(f, irp)
+        verify()
 
     def test_BINARY_POWER(self):
         def f(a, b):
             return a ** b
-        ircfg = compile_to_ircfg(f)
-        csrc = ircfg.to_c()
+        def verify():
+            self.assertEqual(f(3, 2), 9)
+            self.assertEqual(f(3.0, 2.0), 9.0)
+        verify()
+        irp = IrProgram(f)
+        csrc = irp.ircfg.to_c()
         self.assertIn('BINARY_POWER', csrc)
         self.assertIn('x = PyNumber_Power(v, w, &_Py_NoneStruct);', csrc)
+        #patch(f, irp) # libgccjit.so: error: gcc_jit_context_new_call: too many arguments to function "PyNumber_Power" (got 3 args, expected 2)
+        #verify()
 
     def test_BINARY_MULTIPLY(self):
         def f(a, b):
             return a * b
-        ircfg = compile_to_ircfg(f)
-        csrc = ircfg.to_c()
+        def verify():
+            self.assertEqual(f(7, 3), 21)
+            self.assertEqual(f(7.0, 3.0), 21.0)
+        verify()
+        irp = IrProgram(f)
+        csrc = irp.ircfg.to_c()
         self.assertIn('BINARY_MULTIPLY', csrc)
         self.assertIn('x = PyNumber_Multiply(v, w);', csrc)
+        patch(f, irp)
+        verify()
 
     def test_INPLACE_MULTIPLY(self):
         def f(a, b):
             a *= b
             return a
-        ircfg = compile_to_ircfg(f)
-        csrc = ircfg.to_c()
+        def verify():
+            self.assertEqual(f(7, 3), 21)
+            self.assertEqual(f(7.0, 3.0), 21.0)
+        verify()
+        irp = IrProgram(f)
+        csrc = irp.ircfg.to_c()
         self.assertIn('INPLACE_MULTIPLY', csrc)
         self.assertIn('x = PyNumber_InPlaceMultiply(v, w);', csrc)
+        patch(f, irp)
+        verify()
 
     def test_INPLACE_POWER(self):
         def f(a, b):
             a **= b
             return a
-        ircfg = compile_to_ircfg(f)
-        csrc = ircfg.to_c()
+        def verify():
+            self.assertEqual(f(3, 2), 9)
+            self.assertEqual(f(3.0, 2.0), 9.0)
+        verify()
+        irp = IrProgram(f)
+        csrc = irp.ircfg.to_c()
         self.assertIn('INPLACE_POWER', csrc)
         self.assertIn('x = PyNumber_InPlacePower(v, w, &_Py_NoneStruct);', csrc)
+        #patch(f, irp) # libgccjit.so: error: gcc_jit_context_new_call: too many arguments to function "PyNumber_InPlacePower" (got 3 args, expected 2)
+        #verify()
 
     def test_BUILD_MAP(self):
         def f(a, b):
             return {a: b}
-        ircfg = compile_to_ircfg(f)
-        csrc = ircfg.to_c()
+        def verify():
+            self.assertEqual(f(3, 2), {3:2})
+            self.assertEqual(f('foo', 'bar'), {'foo': 'bar'})
+        verify()
+        irp = IrProgram(f)
+        csrc = irp.ircfg.to_c()
         self.assertIn('BUILD_MAP', csrc)
         self.assertIn('x = _PyDict_NewPresized(1);', csrc)
         self.assertIn('STORE_MAP', csrc)
         self.assertIn('err = PyDict_SetItem(v, w, u);', csrc)
+        patch(f, irp)
+        verify()
 
     def test_UNPACK_SEQUENCE(self):
         def f(seq):
             a, b, c = seq
             return 'a: %r, b: %r, c: %r' % (a, b, c)
-        ircfg = compile_to_ircfg(f)
-        csrc = ircfg.to_c()
+        def verify():
+            self.assertEqual(f([3, 2, 1]), 'a: 3, b: 2, c: 1')
+            self.assertEqual(f((3, 2, 1)), 'a: 3, b: 2, c: 1')
+        verify()
+        irp = IrProgram(f)
+        csrc = irp.ircfg.to_c()
         self.assertIn('UNPACK_SEQUENCE', csrc)
+        # libgccjit.so: error: gcc_jit_block_add_assignment: mismatching types: assignment to within_bytecode_offset_3_UNPACK_SEQUENCE_is_tuple (type: int) from PyTuple_CheckExact (v) (type: bool)
+        #patch(f, irp)
+        #verify()
 
     def test_STORE_SUBSCR(self):
         def f(a, b, c):
             a[b] = c
-        ircfg = compile_to_ircfg(f)
-        csrc = ircfg.to_c()
+        def verify():
+            x = [1]
+            self.assertEqual(x[0], 1)
+            f(x, 0, 42)
+            self.assertEqual(x[0], 42)
+        verify()
+        irp = IrProgram(f)
+        csrc = irp.ircfg.to_c()
         self.assertIn('STORE_SUBSCR', csrc)
         self.assertIn('err = PyObject_SetItem(v, w, u);', csrc)
+        # libgccjit.so: error: gcc_jit_block_add_assignment: mismatching types: assignment to err (type: int) from PyObject_SetItem (v, w, u) (type: struct PyObject *)
+        #patch(f, irp)
+        #verify()
 
     def test_BUILD_SLICE(self):
         def f():
             a = [1, 2, 3]
             return a[:]
-        ircfg = compile_to_ircfg(f)
-        csrc = ircfg.to_c()
+        def verify():
+            self.assertEqual(f(), [1, 2, 3])
+        verify()
+        irp = IrProgram(f)
+        csrc = irp.ircfg.to_c()
         self.assertIn('BUILD_SLICE', csrc)
+        # libgccjit.so: error: /tmp/libgccjit-OUKALs/fake.so: undefined symbol: PyList_SET_ITEM
+        # patch(f, irp)
+        # verify()
 
     def test_empty_loop(self):
         def f():
             for i in range(1000):
                 pass
             return i
-        ircfg = compile_to_ircfg(f)
-        csrc = ircfg.to_c()
+        def verify():
+            self.assertEqual(f(), 999)
+        verify()
+        irp = IrProgram(f)
+        csrc = irp.ircfg.to_c()
         self.assertIn('SETUP_LOOP', csrc)
         self.assertIn('FOR_ITER', csrc)
         self.assertIn('POP_BLOCK', csrc)
+        # libgccjit.so: error: gcc_jit_context_new_call: too many arguments to function "impl_LOAD_GLOBAL" (got 2 args, expected 0)
+        #patch(f, irp)
+        #verify()
 
     def test_break(self):
         def f():
             for i in range(1000):
                 break
             return i
-        ircfg = compile_to_ircfg(f)
-        csrc = ircfg.to_c()
+        def verify():
+            self.assertEqual(f(), 0)
+        verify()
+        irp = IrProgram(f)
+        csrc = irp.ircfg.to_c()
         self.assertIn('BREAK_LOOP', csrc)
+        # libgccjit.so: error: gcc_jit_context_new_call: too many arguments to function "impl_LOAD_GLOBAL" (got 2 args, expected 0)
+        #patch(f, irp)
+        #verify()
 
     def test_yield(self):
         def f():
             yield 42
+        def verify():
+            self.assertEqual(list(f()), [42])
+        verify()
         with self.assertRaises(NotImplementedError,
                                msg="Generators aren't yet supported"):
-            ircfg = compile_to_ircfg(f)
+            irp = IrProgram(f)
+            csrc = irp.ircfg.to_c()
+            patch(f, irp)
+            verify()
 
 def sample_bytecode_func(a, b, c):
     return 'a: %r, b: %r, c: %r' % (a, b, c)
