@@ -272,9 +272,9 @@ class Globals(IrGlobals):
             (types.PyObjectPtr, 'PyObject_SetAttr', [types.PyObjectPtr,
                                                      types.PyObjectPtr,
                                                      types.PyObjectPtr]),
-            (types.PyObjectPtr, 'PyObject_SetItem', [types.PyObjectPtr,
-                                                     types.PyObjectPtr,
-                                                     types.PyObjectPtr]),
+            (types.int, 'PyObject_SetItem', [types.PyObjectPtr,
+                                             types.PyObjectPtr,
+                                             types.PyObjectPtr]),
 
             (types.PyObjectPtr, 'PySequence_Contains', [types.PyObjectPtr,
                                                         types.PyObjectPtr]),

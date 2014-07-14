@@ -413,9 +413,8 @@ class CompilationTests(unittest.TestCase):
         csrc = irp.ircfg.to_c()
         self.assertIn('STORE_SUBSCR', csrc)
         self.assertIn('err = PyObject_SetItem(v, w, u);', csrc)
-        # libgccjit.so: error: gcc_jit_block_add_assignment: mismatching types: assignment to err (type: int) from PyObject_SetItem (v, w, u) (type: struct PyObject *)
-        #patch(f, irp)
-        #verify()
+        patch(f, irp)
+        verify()
 
     def test_BUILD_SLICE(self):
         def f():
