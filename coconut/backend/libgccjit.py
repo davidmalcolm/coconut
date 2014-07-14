@@ -43,22 +43,17 @@ class GccJitBackend:
 
         # Create types
         self.typedict = {}
-
-        # First pass: create types, leaving structs opaque
-        for irtype in types.types.values():
-            self.typedict[irtype] = self._make_type(irtype)
-
-        # Second pass: fill in fields of any structs
         self.fielddict = {}
-        for irtype in types.types.values():
-            if isinstance(irtype, IrStruct):
-                gfields = []
-                for irfield in irtype.fields.values():
-                    gfield = self.ctxt.new_field(self.typedict[irfield.type_],
-                                                 irfield.name.encode())
-                    gfields.append(gfield)
-                    self.fielddict[irfield] = gfield
-                self.typedict[irtype].set_fields(gfields)
+
+        # Walk types._events, playing it back
+        for (kind, irtype) in types._events:
+            if kind == 'new_type':
+                self.typedict[irtype] = self._make_type(irtype)
+            elif kind == 'setup_fields':
+                self._set_fields(irtype)
+            else:
+                raise ValueError('unknown event (%r, %r) whilst playing back type-creation'
+                                 % (kind, irtype))
 
         # Now create global functions:
         self.fndict = {}
@@ -103,6 +98,15 @@ class GccJitBackend:
                 return self.ctxt.get_type(gccjit.TypeKind.DOUBLE)
 
         raise NotImplementedError(irtype)
+
+    def _set_fields(self, irtype):
+        gfields = []
+        for irfield in irtype.fields.values():
+            gfield = self.ctxt.new_field(self.typedict[irfield.type_],
+                                         irfield.name.encode())
+            gfields.append(gfield)
+            self.fielddict[irfield] = gfield
+        self.typedict[irtype].set_fields(gfields)
 
     def compile(self, irfns):
         self.params = {}

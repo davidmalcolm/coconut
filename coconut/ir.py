@@ -322,6 +322,7 @@ class IrTypes:
     """
     def __init__(self):
         self.types = OrderedDict()
+        self._events = []
 
     def new_type(self, name):
         t = IrType(self, name)
@@ -334,6 +335,7 @@ class IrTypes:
         return s
 
     def _add(self, newtype):
+        self._events.append(('new_type', newtype))
         self.types[newtype.name] = newtype
 
 class IrType:
@@ -377,6 +379,7 @@ class IrStruct(IrType):
     def setup_fields(self, fieldinfo):
         for type_, name in fieldinfo:
             self.fields[name] = IrField(type_, name)
+        self.types._events.append(('setup_fields', self))
 
 class IrPointerType(IrType):
     def __init__(self, types, other):
@@ -407,6 +410,10 @@ class IrArrayType(IrType):
     def __init__(self, element_type, num_elements):
         IrType.__init__(self, element_type.types,
                         '%s[%i]' % (element_type.name, num_elements))
+        if isinstance(element_type, IrStruct):
+            if not element_type.fields:
+                raise ValueError('Attempting to create an array of %s before fields have been set'
+                                 % element_type)
         self.element_type = element_type
         self.num_elements = num_elements
 
