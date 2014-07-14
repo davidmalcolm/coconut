@@ -38,6 +38,7 @@ class IrFunction:
                 raise ValueError('bad parameter for %s: %s'
                                  % (fnname, param))
         self.params = params
+        self.internal = False
 
     def __hash__(self):
         return hash(self.fnname)
@@ -434,6 +435,7 @@ class IrGlobals:
     def new_helper_function(self, returntype, fnname, params):
         fn = IrCFG(returntype, fnname, params)
         self.functions.append(fn)
+        fn.internal = True
         return fn
 
 ############################################################################

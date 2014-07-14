@@ -126,8 +126,11 @@ class GccJitBackend:
                                          irparam.name.encode())
             params.append(gparam)
             self.params[irparam] = gparam
-
-        return self.ctxt.new_function(gccjit.FunctionKind.EXPORTED,
+        if irfn.internal:
+            kind = gccjit.FunctionKind.INTERNAL
+        else:
+            kind = gccjit.FunctionKind.EXPORTED
+        return self.ctxt.new_function(kind,
                                       self.typedict[irfn.returntype],
                                       irfn.fnname.encode(),
                                       params)
