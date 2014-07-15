@@ -120,6 +120,9 @@ class Types(IrTypes):
         self.PyTupleObject = self.new_struct('PyTupleObject')
         self.PyTupleObjectPtr = self.PyTupleObject.get_pointer()
 
+        self.PyListObject = self.new_struct('PyListObject')
+        self.PyListObjectPtr = self.PyListObject.get_pointer()
+
         self.PyLongObject = self.new_struct('PyLongObject')
         self.PyLongObjectPtr = self.PyLongObject.get_pointer()
 
@@ -208,6 +211,14 @@ class Types(IrTypes):
             PyObject_VAR_HEAD +
             [
                 (self.PyObjectPtrArray, 'ob_item'),
+            ]
+        )
+
+        self.PyListObject.setup_fields(
+            PyObject_VAR_HEAD +
+            [
+                (self.PyObjectPtrPtr, 'ob_item'),
+                (self.Py_ssize_t, 'allocated'),
             ]
         )
 
@@ -365,6 +376,7 @@ class Globals(IrGlobals):
     def make_helper_functions(self):
         self._make_PyTuple_GET_ITEM()
         self._make_PyTuple_SET_ITEM()
+        self._make_PyList_SET_ITEM()
         self._make_Py_INCREF()
         self._make_Py_DECREF()
         self._make_Py_XDECREF()
@@ -406,6 +418,24 @@ class Globals(IrGlobals):
         b_entry.add_assignment(
             ArrayLookup(
                 FieldDereference(Cast(obj, self.types.PyTupleObjectPtr),
+                                 'ob_item'),
+                idx),
+            val)
+        b_entry.add_return(None)
+
+    def _make_PyList_SET_ITEM(self):
+        """
+        #define PyList_SET_ITEM(op, i, v) (((PyListObject *)(op))->ob_item[i] = (v))
+        """
+        obj = Param(self.types.PyObjectPtr, 'obj')
+        idx = Param(self.types.Py_ssize_t, 'idx')
+        val = Param(self.types.PyObjectPtr, 'val')
+        self.PyList_SET_ITEM = self.new_helper_function(
+            self.types.void, 'PyList_SET_ITEM', [obj, idx, val])
+        b_entry = self.PyList_SET_ITEM.add_block('entry')
+        b_entry.add_assignment(
+            ArrayLookup(
+                FieldDereference(Cast(obj, self.types.PyListObjectPtr),
                                  'ob_item'),
                 idx),
             val)
