@@ -476,15 +476,15 @@ class Globals(IrGlobals):
         self.Py_XDECREF = self.new_helper_function(
             self.types.void, 'Py_XDECREF', [obj])
         b_entry = self.Py_XDECREF.add_block('entry')
-        b_true, b_false = b_entry.add_conditional(
+        b_null, b_nonnull = b_entry.add_conditional(
             Comparison(obj,
                        '==',
                        NULL(self.types.PyObjectPtr)))
 
-        b_true.add_call(None, self.Py_DECREF, (obj, ))
-        b_true.add_return(None)
+        b_nonnull.add_call(None, self.Py_DECREF, (obj, ))
+        b_nonnull.add_return(None)
 
-        b_false.add_return(None)
+        b_null.add_return(None)
 
     # These correspond to macros in ceval.h:
 
