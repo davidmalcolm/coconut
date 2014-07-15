@@ -416,6 +416,18 @@ class CompilationTests(unittest.TestCase):
         patch(f, irp)
         verify()
 
+    def test_BUILD_LIST(self):
+        def f():
+            return [1, 2, 3]
+        def verify():
+            self.assertEqual(f(), [1, 2, 3])
+        verify()
+        irp = IrProgram(f)
+        csrc = irp.ircfg.to_c()
+        self.assertIn('BUILD_LIST', csrc)
+        patch(f, irp)
+        verify()
+
     def test_BUILD_SLICE(self):
         def f():
             a = [1, 2, 3]
