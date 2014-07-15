@@ -1477,7 +1477,7 @@ class STORE_ATTR(BytecodeOp):
         #    Py_DECREF(u);
         #    if (err == 0) DISPATCH();
         #    break;
-        ctxt.assign(w, Expression('GETITEM(names, %i)' % self.arg))
+        ctxt.add_GETITEM(w, 'names', self.arg)
         ctxt.assign(v, ctxt.TOP())
         ctxt.assign(u, ctxt.SECOND())
         ctxt.STACKADJ(-2)
@@ -1485,7 +1485,8 @@ class STORE_ATTR(BytecodeOp):
         ctxt.add_call(err, ctxt.globals_.PyObject_SetAttr, (v, w, u))
         ctxt.Py_DECREF(v)
         ctxt.Py_DECREF(u)
-        true_ctxt, false_ctxt = ctxt.add_conditional(err, '==', ConstInt(0), likely=True)
+        true_ctxt, false_ctxt = ctxt.add_conditional(
+            err, '==', ConstInt(ctxt.types.int, 0))
         true_ctxt.DISPATCH()
         false_ctxt.break_to_on_error()
 

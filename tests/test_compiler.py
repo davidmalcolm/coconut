@@ -441,6 +441,25 @@ class CompilationTests(unittest.TestCase):
         patch(f, irp)
         verify()
 
+    def test_STORE_ATTR(self):
+        def f(a, b):
+            a.foo = b
+        def verify():
+            class Foo:
+                def __init__(self):
+                    self.foo = 5
+            a = Foo()
+            self.assertEqual(a.foo, 5)
+            f(a, 42)
+            self.assertEqual(a.foo, 42)
+        verify()
+        irp = IrProgram(f)
+        csrc = irp.ircfg.to_c()
+        self.assertIn('STORE_ATTR', csrc)
+        self.assertIn('err = PyObject_SetAttr(v, w, u);', csrc)
+        patch(f, irp)
+        verify()
+
     def test_empty_loop(self):
         def f():
             for i in range(1000):
