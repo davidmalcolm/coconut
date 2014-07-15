@@ -426,9 +426,8 @@ class CompilationTests(unittest.TestCase):
         irp = IrProgram(f)
         csrc = irp.ircfg.to_c()
         self.assertIn('BUILD_SLICE', csrc)
-        # libgccjit.so: error: /tmp/libgccjit-OUKALs/fake.so: undefined symbol: PyList_SET_ITEM
-        # patch(f, irp)
-        # verify()
+        patch(f, irp)
+        verify()
 
     def test_empty_loop(self):
         def f():
