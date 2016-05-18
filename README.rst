@@ -1,6 +1,6 @@
 Experiments towards a method JIT for CPython 3.*
 
-To run:
+To run, with a suitably patched python3:
 
    PYTHONPATH=. python3 setup.py test
 
@@ -29,8 +29,9 @@ Caveats:
 
 Actually running the built code is a work-in-progress.  The approach
 I'm currently following involves a small patch to CPython, see
-`cpython.patch` within the coconut source tree.  Approaches that don't
-require patching CPython are probably preferable.
+`cpython.patch` within the coconut source tree (this was built
+against CPython 3.3).
+Approaches that don't require patching CPython are probably preferable.
 
 It's currently a toy: it only implements a subset of the bytecodes, and
 there are plenty of optimizations it doesn't do e.g. type inference,
